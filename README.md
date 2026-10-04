@@ -1,57 +1,66 @@
 # Sales Module — Leads Management
 
-**Module:** `sales` · **Entity:** `lead` · **Table:** `sales_leads`
+**Module:** `sales` (git submodule `vortexgin/my-sales-library`)
+**Entities:** `lead` · `lead-activity` · `lead-metadata` · `lead-metadata-field` · `lead-status`
 
 ## Purpose
 
-Track prospective customers from first contact through conversion,
-following the repo's standard `base/users` slice:
+Track prospective customers from first contact through conversion.
+Each entity follows the repo slice:
 Model → UseCases → encrypted + authorized API routes →
-Table/Form components → views + `paths.ts`.
+components → views + `paths.ts`.
 
-## Lead Fields
+## Entities
 
-| Field | Type | Notes |
-|---|---|---|
-| `uuid` | UUID PK | auto |
-| `name` | string(120) | required, min 2 |
-| `email` | string(160), unique | required |
-| `phone_number` | string(30) | required, min 6 |
-| `company` | string(160) | optional |
-| `source` | enum | `website \| referral \| ads \| cold_call \| event \| other` (default `website`) |
-| `status` | enum | `new \| contacted \| qualified \| converted \| lost` (default `new`) |
-| `value` | integer, nullable | estimated deal value (minor units) |
-| `assigned_to` | UUID, nullable | FK → `base_users.uuid` |
-| `notes` | text, nullable | — |
-| `created_at / updated_at / deleted_at` | — | soft-delete convention |
+| Entity | Table | Collection route | Activity entity |
+|---|---|---|---|
+| lead | `sales_leads` | `/sales/api/v1/leads` | `lead` |
+| lead-activity | `sales_lead_activities` | `/sales/api/v1/lead-activities` | `lead_activity` |
+| lead-metadata | `sales_lead_metadata` | `/sales/api/v1/lead-metadata` | `lead_metadata` |
+| lead-metadata-field | `sales_lead_metadata_fields` | `/sales/api/v1/lead-metadata-fields` | `lead_metadata_field` |
+| lead-status | `sales_lead_statuses` | `/sales/api/v1/lead-statuses` | `lead_status` |
 
-## Slice Outline
+## Lead fields
 
-- **Model** `app/sales/models/LeadModel.ts` — `toApi()`,
-  `Create/UpdateLeadInput`, lazy `getLeadModel()` factory.
-- **UseCases** `app/sales/useCases/lead/Lead{List,Get,Create,Update,Delete}UseCase`
-  extends `BaseUseCase` — Joi validation in `preExec`, billing + activity
-  in `postExec`.
-- **API** `app/sales/api/[version]/leads/route.ts` + `[uuid]/route.ts` —
-  `withAuthorization` + `withEncryption`, `ok` / `fail` envelopes.
-- **Components** `app/sales/components/lead/` — `LeadTable.tsx`
-  (`filter[q]`, status/source filters, `StatusBadge`), `LeadForm.tsx`
-  (assignee dropdown from users API), `DeleteLeadButton.tsx`.
-- **Views** `app/sales/views/leads/` — list, `create`, `[uuid]` detail
-  (+ `ActivityTimeline`), `[uuid]/edit`, `paths.ts` (`LEAD_LIST_PATH`).
-- **Migration** `migrations/XXXX-create-sales-leads-table.js`.
+`uuid`, `name`, `email` (unique), `phone_number`, `company` (nullable),
+`source` (enum), `status` (**free-form string**, default `"new"` — stages are
+defined in lead-status master data, not the DB), `value` (nullable),
+`assigned_to` (nullable FK → `base_users.uuid`), `organization_id`
+(auto-filled, immutable), `notes`, plus `created_at / updated_at / deleted_at`.
 
-## Permissions
+## Leads board (not a table)
 
-`sales:lead:list:list`, `sales:lead:create:create`,
-`sales:lead:view:detail`, `sales:lead:view:update`,
-`sales:lead:view:delete` — enforced via `withAuthorization` (API)
-and `AuthComponent` + `AccessDenied` (views).
+`views/leads/page.tsx` renders `components/lead/LeadBoard.tsx`: a kanban
+board that fetches **lead-statuses and leads independently**
+(`Promise.allSettled`) and groups leads into drag-and-drop columns by
+`status.name`. Leads with an unknown status fall into an `Other` column.
+A statuses outage degrades to a scoped warning — it never blanks the leads.
 
-## Billing / Activity
+Couplings (all client-side, all permission-gated):
 
-`LeadCreateUseCase` follows the `TransactionUseCase` baseline:
-`checkTransaction(actor, "sales:lead:create:create")` in `preExec`,
-`settleTransaction(...)` in `postExec` — creation consumes invoice
-`credit_usage` on quota/transaction packages and records `credit`
-on the activity timeline.
+- Columns ← `GET /sales/api/v1/lead-statuses`
+  (requires `sales:lead-status:list:list`).
+- Drag-and-drop / per-card status `<select>` → `PUT /sales/api/v1/leads/{uuid}`
+  (requires `sales:lead:view:update`).
+- `LeadForm` status and metadata-field dropdowns ← lead-statuses and
+  lead-metadata-fields APIs; they render empty when those calls fail.
+- `LeadDetailClient` / `LeadActivitySection` ← lead-activities API
+  (`filter[leads_id]`).
+
+## Conventions
+
+- **Permissions** `sales:<entity>:list:list`, `sales:<entity>:create:create`,
+  `sales:<entity>:view:detail`, `sales:<entity>:view:update`,
+  `sales:<entity>:view:delete` — enforced via `withAuthorization` (API)
+  and `AuthComponent` + `AccessDenied` (views). Sidebar menus are gated by
+  `base:menu:sales:*` codes (Sales → Lead, Lead Status, Metadata Field).
+- **Billing:** only `LeadCreateUseCase` uses the `TransactionUseCase`
+  baseline (`checkTransaction` / `settleTransaction`). Master-data creates
+  (statuses, metadata, fields, activities) log plain activity rows.
+- **Organization:** `organization_id` is resolved from the acting user's
+  organization link on create and list (`applyOrganizationScope`); it is
+  never accepted from the payload and never updatable. Unlinked actors keep
+  full visibility.
+- **Soft delete:** `deleted_at` set on delete; all reads filter it.
+  Master-data names are unique per organization (partial unique index +
+  `DuplicateEntityException` on create/rename).

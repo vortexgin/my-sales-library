@@ -5,6 +5,7 @@ export type LeadMetadataStatus = "active" | "inactive" | "deleted";
 
 export type LeadMetadata = {
   uuid: string;
+  leads_id: string | null;
   lead_metadata_field_id: string;
   value: string;
   status: LeadMetadataStatus;
@@ -14,6 +15,7 @@ export type LeadMetadata = {
 };
 
 export type CreateLeadMetadataInput = {
+  leads_id?: string | null;
   lead_metadata_field_id: string;
   value: string;
   status?: LeadMetadataStatus;
@@ -31,6 +33,7 @@ export type LeadMetadataModelCreationAttributes = Partial<LeadMetadataModelAttri
 
 export class LeadMetadataModel extends Model<LeadMetadataModelAttributes, LeadMetadataModelCreationAttributes> {
   declare uuid: string;
+  declare leads_id: string | null;
   declare lead_metadata_field_id: string;
   declare value: string;
   declare status: LeadMetadataStatus;
@@ -41,6 +44,7 @@ export class LeadMetadataModel extends Model<LeadMetadataModelAttributes, LeadMe
   static toApi(leadMetadata: any): LeadMetadata {
     return {
       uuid: leadMetadata.uuid,
+      leads_id: leadMetadata.leads_id ?? null,
       lead_metadata_field_id: leadMetadata.lead_metadata_field_id,
       value: leadMetadata.value,
       status: leadMetadata.status,
@@ -81,6 +85,11 @@ async function initLeadMetadataModel(): Promise<typeof LeadMetadataModel> {
         lead_metadata_field_id: {
           type: DataTypes.UUID,
           allowNull: false,
+        },
+        leads_id: {
+          type: DataTypes.UUID,
+          allowNull: true,
+          defaultValue: null,
         },
         value: {
           type: DataTypes.TEXT,

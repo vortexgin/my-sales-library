@@ -2,11 +2,13 @@ import { randomUUID } from "crypto";
 import Joi from "joi";
 import LeadMetadataModelFactory, { LeadMetadataModel, type CreateLeadMetadataInput, type LeadMetadata } from "@/app/sales/models/LeadMetadataModel";
 import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel } from "@/app/sales/models/LeadMetadataFieldModel";
+import LeadModelFactory, { LeadModel } from "@/app/sales/models/LeadModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import NotFoundException from "@/exceptions/NotFoundException";
 
 const createLeadMetadataSchema = Joi.object({
+  leads_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   lead_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   value: Joi.string().trim().min(1).required(),
   status: Joi.string().valid("active", "inactive", "deleted").optional(),
@@ -22,6 +24,14 @@ export class LeadMetadataCreateUseCase extends BaseUseCase<CreateLeadMetadataInp
       throw new NotFoundException("Lead metadata field not found.");
     }
 
+    if (validated.leads_id) {
+      await LeadModelFactory();
+      const lead = await LeadModel.findOne({ where: { uuid: validated.leads_id, deleted_at: null } });
+      if (!lead) {
+        throw new NotFoundException("Lead not found.");
+      }
+    }
+
     return { input: validated, actor: actor ?? null };
   }
 
@@ -30,6 +40,7 @@ export class LeadMetadataCreateUseCase extends BaseUseCase<CreateLeadMetadataInp
     await LeadMetadataModelFactory();
     const row = await LeadMetadataModel.create({
       uuid: randomUUID(),
+      leads_id: input.leads_id ?? null,
       lead_metadata_field_id: input.lead_metadata_field_id,
       value: input.value?.trim(),
       status: input.status ?? "active",

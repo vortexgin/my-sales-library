@@ -6,6 +6,7 @@ import { BaseUseCase } from "@/useCases/BaseUseCase";
 import NotFoundException from "@/exceptions/NotFoundException";
 
 const updateLeadMetadataSchema = Joi.object({
+  leads_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   lead_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
   value: Joi.string().trim().min(1).optional(),
   status: Joi.string().valid("active", "inactive", "deleted").optional(),
@@ -45,6 +46,10 @@ export class LeadMetadataUpdateUseCase extends BaseUseCase<string, LeadMetadata,
 
     if (typeof input.lead_metadata_field_id === "string" && input.lead_metadata_field_id.trim()) {
       nextData.lead_metadata_field_id = input.lead_metadata_field_id;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "leads_id")) {
+      nextData.leads_id = (input as Record<string, unknown>).leads_id ?? null;
     }
 
     if (typeof input.value === "string" && input.value.trim()) {

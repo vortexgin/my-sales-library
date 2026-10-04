@@ -27,6 +27,13 @@ export type Lead = {
   deleted_at: string | null;
 };
 
+export type LeadMetadataNestedInput = {
+  uuid?: string;
+  lead_metadata_field_id?: string;
+  field_name?: string;
+  value: string;
+};
+
 export type CreateLeadInput = {
   name: string;
   email: string;
@@ -38,6 +45,7 @@ export type CreateLeadInput = {
   assigned_to?: string | null;
   organization_id?: string | null;
   notes?: string | null;
+  metadata?: LeadMetadataNestedInput[];
 };
 
 export type UpdateLeadInput = Partial<CreateLeadInput>;

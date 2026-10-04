@@ -16,7 +16,9 @@ async function handleGet(request: NextRequest) {
     const rows = await new LeadMetadataListUseCase().exec({
       filter: {
         q: queryParam(params, "filter[q]"),
-        name: queryParam(params, "filter[name]"),
+        leads_id: queryParam(params, "filter[leads_id]"),
+        lead_metadata_field_id:
+          queryParam(params, "filter[lead_metadata_field_id]") ?? queryParam(params, "filter[name]"),
         status: queryParam(params, "filter[status]"),
       },
       sortProperty: queryParam(params, "sortProperty"),

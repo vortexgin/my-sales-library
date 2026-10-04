@@ -1,12 +1,21 @@
 import { randomUUID } from "crypto";
 import Joi, { Schema } from "joi";
 import LeadModelFactory, { LeadModel, type CreateLeadInput, type Lead } from "@/app/sales/models/LeadModel";
+import LeadMetadataModelFactory, { LeadMetadataModel } from "@/app/sales/models/LeadMetadataModel";
+import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel } from "@/app/sales/models/LeadMetadataFieldModel";
 import UserModelFactory, { UserModel } from "@/app/base/models/UserModel";
-import type { ActivityActor } from "@/app/base/models/ActivityLogModel";
+import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import { checkTransaction, settleTransaction, type TransactionBilling } from "@/useCases/TransactionUseCase";
 import DuplicateEntityException from "@/exceptions/DuplicateEntityException";
 import NotFoundException from "@/exceptions/NotFoundException";
+import BadParameterException from "@/exceptions/BadParameterException";
+
+const metadataNestedSchema = Joi.object({
+  lead_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+});
 
 const createLeadSchema = Joi.object({
   name: Joi.string().trim().min(2).required(),
@@ -18,6 +27,7 @@ const createLeadSchema = Joi.object({
   value: Joi.number().integer().min(0).allow(null).optional(),
   assigned_to: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   notes: Joi.string().trim().allow("", null).optional(),
+  metadata: Joi.array().items(metadataNestedSchema).optional(),
 });
 
 export type LeadCreateContext = { input: CreateLeadInput; actor: ActivityActor; organizationId: string | null } & TransactionBilling;
@@ -54,11 +64,29 @@ export class LeadCreateUseCase extends BaseUseCase<CreateLeadInput, Lead, LeadCr
       }
     }
 
+    const metadata = (input as CreateLeadInput).metadata;
+    if (metadata && metadata.length > 0) {
+      await LeadMetadataFieldModelFactory();
+      for (const item of metadata) {
+        if (!item.lead_metadata_field_id && !item.field_name?.trim()) {
+          throw new BadParameterException("Each metadata needs a field or a new field name.");
+        }
+        if (item.lead_metadata_field_id) {
+          const field = await LeadMetadataFieldModel.findOne({
+            where: { uuid: item.lead_metadata_field_id, deleted_at: null },
+          });
+          if (!field) {
+            throw new NotFoundException("Lead metadata field not found.");
+          }
+        }
+      }
+    }
+
     return validatedInput;
   }
 
   protected async execute(context: LeadCreateContext): Promise<Lead> {
-    const { input, organizationId } = context;
+    const { input, organizationId, actor } = context;
     await LeadModelFactory();
     const lead = await LeadModel.create({
       uuid: randomUUID(),
@@ -75,7 +103,65 @@ export class LeadCreateUseCase extends BaseUseCase<CreateLeadInput, Lead, LeadCr
       deleted_at: null,
     });
 
-    return LeadModel.toApi(lead.toJSON());
+    const api = LeadModel.toApi(lead.toJSON());
+
+    // Nested metadata insert (also supports on-the-fly field creation).
+    const metadata = input.metadata;
+    if (metadata && metadata.length > 0) {
+      await LeadMetadataModelFactory();
+      await LeadMetadataFieldModelFactory();
+      for (const item of metadata) {
+        let fieldId = item.lead_metadata_field_id;
+        const newName = item.field_name?.trim();
+        if (!fieldId && newName) {
+          const existingByName = await LeadMetadataFieldModel.findOne({
+            where: { name: newName, deleted_at: null },
+          });
+          if (existingByName) {
+            fieldId = existingByName.uuid;
+          } else {
+            const created = await LeadMetadataFieldModel.create({
+              uuid: randomUUID(),
+              organization_id: organizationId ?? null,
+              name: newName,
+              description: newName,
+              status: "active",
+              deleted_at: null,
+            });
+            fieldId = created.uuid;
+            void recordActivityLog({
+              actor: actor ?? null,
+              operation: "create",
+              entity: "lead_metadata_field",
+              entity_uuid: fieldId,
+              origin: null,
+              updated: { uuid: fieldId, name: newName } as any,
+            });
+          }
+        }
+        if (!fieldId) {
+          continue;
+        }
+        const row = await LeadMetadataModel.create({
+          uuid: randomUUID(),
+          leads_id: api.uuid,
+          lead_metadata_field_id: fieldId,
+          value: item.value?.trim(),
+          status: "active",
+          deleted_at: null,
+        });
+        void recordActivityLog({
+          actor: actor ?? null,
+          operation: "create",
+          entity: "lead_metadata",
+          entity_uuid: row.uuid,
+          origin: null,
+          updated: LeadMetadataModel.toApi(row.toJSON()) as any,
+        });
+      }
+    }
+
+    return api;
   }
 
   protected async postExec(result: Lead, context?: LeadCreateContext): Promise<Lead> {

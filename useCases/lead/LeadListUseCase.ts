@@ -72,7 +72,7 @@ const listLeadsSchema = Joi.object({
     .default("created_at"),
   sortDirection: Joi.string().valid("asc", "desc").insensitive().default("desc"),
   offset: Joi.number().integer().min(0).default(0),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  limit: Joi.number().integer().min(1).max(1000).default(20),
 });
 
 export class LeadListUseCase extends BaseUseCase<ListLeadsInput | void, Lead[], ListLeadsQuery> {

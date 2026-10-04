@@ -1,7 +1,9 @@
 import Joi from "joi";
+import { Op, UniqueConstraintError } from "sequelize";
 import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel, type LeadMetadataField, type UpdateLeadMetadataFieldInput } from "@/app/sales/models/LeadMetadataFieldModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
+import DuplicateEntityException from "@/exceptions/DuplicateEntityException";
 import NotFoundException from "@/exceptions/NotFoundException";
 
 const updateLeadMetadataFieldSchema = Joi.object({
@@ -24,6 +26,20 @@ export class LeadMetadataFieldUpdateUseCase extends BaseUseCase<string, LeadMeta
       throw new NotFoundException("Lead metadata field not found")
     }
     this.beforeData = LeadMetadataFieldModel.toApi(this.leadMetadataFieldData?.toJSON());
+
+    if (validatedInput.name?.trim()) {
+      const nameTaken = await LeadMetadataFieldModel.findOne({
+        where: {
+          organization_id: this.beforeData?.organization_id ?? null,
+          name: validatedInput.name.trim(),
+          uuid: { [Op.ne]: uuid },
+          deleted_at: null,
+        },
+      });
+      if (nameTaken) {
+        throw new DuplicateEntityException("A lead metadata field with this name already exists.");
+      }
+    }
 
     return { uuid, input: validatedInput, actor: actor ?? null };
   }
@@ -51,7 +67,14 @@ export class LeadMetadataFieldUpdateUseCase extends BaseUseCase<string, LeadMeta
       }
     }
 
-    await this.leadMetadataFieldData?.update(nextData);
+    await this.leadMetadataFieldData?.update(nextData).catch((error) => {
+      // Lost a concurrent rename race against the (organization_id, name)
+      // unique index: report the same 409 as the pre-update check.
+      if (error instanceof UniqueConstraintError) {
+        throw new DuplicateEntityException("A lead metadata field with this name already exists.");
+      }
+      throw error;
+    });
 
     return LeadMetadataFieldModel.toApi(this.leadMetadataFieldData?.toJSON());
   }
