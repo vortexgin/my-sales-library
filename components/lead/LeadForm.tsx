@@ -2,16 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { LEAD_LIST_PATH } from "@/app/sales/views/leads/paths";
 import type { Lead } from "@/app/sales/models/LeadModel";
 import type { LeadMetadata } from "@/app/sales/models/LeadMetadataModel";
 import type { LeadMetadataField } from "@/app/sales/models/LeadMetadataFieldModel";
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
+import type { User } from "@/app/base/models/UserModel";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 
 const LEADS_API = "/sales/api/v1/leads";
+const USERS_API = "/base/api/v1/users";
+const UPLOAD_API = "/base/api/v1/tools/upload-file";
 const NEW_FIELD_VALUE = "__new__";
+const CLIENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
@@ -53,6 +57,13 @@ export function LeadForm({
   const [isPending, setIsPending] = useState(false);
   const [statuses, setStatuses] = useState<LeadStatus[]>([]);
   const [fields, setFields] = useState<LeadMetadataField[]>([]);
+  const [assignees, setAssignees] = useState<User[]>([]);
+  const [assigneeId, setAssigneeId] = useState(initial?.assigned_to ?? "");
+  const [assigneesLoading, setAssigneesLoading] = useState(true);
+  const [assigneesError, setAssigneesError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadTargetKey, setUploadTargetKey] = useState<string | null>(null);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [rows, setRows] = useState<MetadataRow[]>(() => {
     if (initial?.metadata && initial.metadata.length > 0) {
       return initial.metadata.map((item) => ({
@@ -67,13 +78,21 @@ export function LeadForm({
     return [newRow()];
   });
 
+  // Keep the current assignee selectable even when outside the
+  // organization-scoped list (e.g. assignment predates an org move).
+  const assigneeItems =
+    initial?.assigned_to && !assignees.some((option) => option.uuid === initial.assigned_to)
+      ? [{ uuid: initial.assigned_to, name: initial.assigned_to, email: "" } as User, ...assignees]
+      : assignees;
+
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [statusEnvelope, fieldEnvelope] = await Promise.all([
+        const [statusEnvelope, fieldEnvelope, userEnvelope] = await Promise.all([
           getEncrypted<LeadStatus[]>(`/sales/api/v1/lead-statuses?limit=500&sortProperty=name&sortDirection=asc`),
           getEncrypted<LeadMetadataField[]>(`/sales/api/v1/lead-metadata-fields?limit=500&sortProperty=name&sortDirection=asc`),
+          getEncrypted<User[]>(`${USERS_API}?sortProperty=name&sortDirection=asc&limit=100&filter[org_scope]=actor`),
         ]);
         if (!active) {
           return;
@@ -84,8 +103,20 @@ export function LeadForm({
         if (fieldEnvelope.success) {
           setFields((fieldEnvelope.data ?? []).filter((row) => row.status !== "deleted"));
         }
+        if (!userEnvelope.success) {
+          setAssigneesError(userEnvelope.message || "Failed to load users.");
+          return;
+        }
+        setAssignees(userEnvelope.data ?? []);
       } catch {
+        if (active) {
+          setAssigneesError("Failed to load users. Please try again.");
+        }
         // Dropdowns stay empty; user can still type free-form values.
+      } finally {
+        if (active) {
+          setAssigneesLoading(false);
+        }
       }
     })();
     return () => {
@@ -99,6 +130,57 @@ export function LeadForm({
 
   function removeRow(key: string) {
     setRows((current) => (current.length <= 1 ? current : current.filter((row) => row.key !== key)));
+  }
+
+  function readAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function pickFile(key: string) {
+    setUploadTargetKey(key);
+    fileInputRef.current?.click();
+  }
+
+  async function handleFilePicked(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Reset so picking the same file twice still fires onChange.
+    event.target.value = "";
+    const target = uploadTargetKey;
+    setUploadTargetKey(null);
+    if (!file || !target) {
+      return;
+    }
+    if (file.size > CLIENT_MAX_FILE_BYTES) {
+      setError(`File exceeds the ${CLIENT_MAX_FILE_BYTES} byte limit.`);
+      return;
+    }
+    setUploadingKey(target);
+    setError("");
+    try {
+      const data = await readAsBase64(file);
+      const envelope = await postEncrypted<{ key: string; url: string }>(UPLOAD_API, {
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        data,
+      });
+      if (!envelope.success) {
+        throw new Error(envelope.message || "Failed to upload file.");
+      }
+      updateRow(target, { value: envelope.data.url });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload file. Please try again.");
+    } finally {
+      setUploadingKey(null);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -116,12 +198,9 @@ export function LeadForm({
         source: String(formData.get("source") ?? "website"),
         status: String(formData.get("status") ?? "new").trim() || "new",
         value: valueRaw === "" ? null : Number(valueRaw),
-        assigned_to: String(formData.get("assigned_to") ?? "").trim() || null,
+        assigned_to: assigneeId || null,
         notes: String(formData.get("notes") ?? "").trim() || null,
       };
-      if (payload.assigned_to === "") {
-        payload.assigned_to = null;
-      }
       if (typeof payload.value === "number" && Number.isNaN(payload.value)) {
         setError("Value must be a number.");
         setIsPending(false);
@@ -236,7 +315,7 @@ export function LeadForm({
               )}
             </label>
             <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Value</span>
+              <span className="mb-2 block text-sm font-medium text-slate-700">Estimated deal value</span>
               <input
                 type="number"
                 name="value"
@@ -250,9 +329,33 @@ export function LeadForm({
           </div>
 
           <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Assigned to (user UUID, optional)</span>
-            <input type="text" name="assigned_to" defaultValue={initial?.assigned_to ?? ""} placeholder="User UUID" className={inputClass} />
+            <span className="mb-2 block text-sm font-medium text-slate-700">Assigned to</span>
+            <select
+              name="assigned_to"
+              value={assigneeId}
+              onChange={(event) => setAssigneeId(event.target.value)}
+              disabled={assigneesLoading}
+              className={inputClass}
+            >
+              <option value="">
+                {assigneesLoading ? "Loading users..." : "— Unassigned —"}
+              </option>
+              {assigneeItems.map((option) => (
+                <option key={option.uuid} value={option.uuid}>
+                  {option.name}{option.email ? ` (${option.email})` : ""}
+                </option>
+              ))}
+            </select>
+            <span className="mt-2 block text-xs text-slate-500">
+              Only users in your organization are listed. Users without an organization see only unlinked users.
+            </span>
           </label>
+
+          {assigneesError ? (
+            <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {assigneesError}
+            </p>
+          ) : null}
 
           <label className="block">
             <span className="mb-2 block text-sm font-medium text-slate-700">Notes</span>
@@ -273,6 +376,14 @@ export function LeadForm({
                 Add row
               </button>
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              aria-hidden
+              tabIndex={-1}
+              onChange={handleFilePicked}
+            />
             <div className="mt-4 space-y-3">
               {rows.map((row, index) => (
                 <div key={row.key} className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_auto]">
@@ -310,13 +421,23 @@ export function LeadForm({
                   </label>
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium text-slate-600">Value</span>
-                    <input
-                      type="text"
-                      value={row.value}
-                      onChange={(event) => updateRow(row.key, { value: event.target.value })}
-                      placeholder="Field value"
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={row.value}
+                        onChange={(event) => updateRow(row.key, { value: event.target.value })}
+                        placeholder="Field value"
+                        className="w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => pickFile(row.key)}
+                        disabled={uploadingKey !== null}
+                        className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {uploadingKey === row.key ? "Uploading..." : "File"}
+                      </button>
+                    </div>
                   </label>
                   <div className="flex items-end">
                     <button

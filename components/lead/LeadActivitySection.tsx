@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import type { LeadActivity } from "@/app/sales/models/LeadActivityModel";
 import { getEncrypted, postEncrypted } from "@/libraries/EncryptedFetch";
 
@@ -21,7 +22,10 @@ export function LeadActivityModal({
   const [error, setError] = useState("");
   const [isPending, setIsPending] = useState(false);
 
-  if (!open) {
+  // Portalled to document.body: ancestor cards use backdrop-blur, which
+  // creates a containing block that would otherwise trap this fixed overlay
+  // behind the activity container.
+  if (!open || typeof document === "undefined") {
     return null;
   }
 
@@ -62,7 +66,7 @@ export function LeadActivityModal({
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Create lead activity">
       <div className="absolute inset-0 bg-slate-950/50" onClick={onClose} aria-hidden />
       <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[24px] border border-slate-200 bg-white p-6 shadow-2xl">
@@ -124,7 +128,8 @@ export function LeadActivityModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

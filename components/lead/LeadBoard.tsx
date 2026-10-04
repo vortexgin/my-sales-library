@@ -245,27 +245,6 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                           ) : null}
                         </div>
                       </Link>
-                      {canUpdate && column.key !== "__other__" ? (
-                        <label className="mt-2 block">
-                          <span className="sr-only">Move {lead.name} to status</span>
-                          <select
-                            value={lead.status}
-                            onChange={(event) => {
-                              if (event.target.value !== lead.status) {
-                                moveLead(lead.uuid, event.target.value);
-                              }
-                            }}
-                            aria-label={`Move ${lead.name} to status`}
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
-                          >
-                            {statuses.map((option) => (
-                              <option key={option.uuid} value={option.name}>
-                                {option.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : null}
                     </article>
                   ))
                 )}
