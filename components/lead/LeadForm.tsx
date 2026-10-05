@@ -109,8 +109,8 @@ export function LeadForm({
         // error and must not block the other dropdowns (free-form fallbacks
         // — status text input, add-new-field — stay usable).
         const [statusResult, fieldResult, userResult] = await Promise.allSettled([
-          getEncrypted<LeadStatus[]>(`/sales/api/v1/lead-statuses?limit=500&sortProperty=name&sortDirection=asc`),
-          getEncrypted<LeadMetadataField[]>(`/sales/api/v1/lead-metadata-fields?limit=500&sortProperty=name&sortDirection=asc`),
+          getEncrypted<LeadStatus[]>(`/sales/api/v1/lead-statuses?limit=100&sortProperty=name&sortDirection=asc`),
+          getEncrypted<LeadMetadataField[]>(`/sales/api/v1/lead-metadata-fields?limit=100&sortProperty=name&sortDirection=asc`),
           getEncrypted<User[]>(`${USERS_API}?sortProperty=name&sortDirection=asc&limit=100&filter[org_scope]=actor`),
         ]);
         if (!active) {

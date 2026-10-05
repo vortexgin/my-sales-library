@@ -88,8 +88,10 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
     ...EMPTY_BOARD_FILTERS,
     ...filtersFromSearchParams(searchParams),
   }));
-  const [views, setViews] = useState<SavedBoardView[]>([]);
+  const [views, setViews] = useState<SavedBoardView[]>(() => loadBoardViews());
   const [viewName, setViewName] = useState("");
+  // Mount timestamp captured once: computing it in render would be impure.
+  const [mountedAt] = useState(() => Date.now());
   const [dragUuid, setDragUuid] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
@@ -125,7 +127,6 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
 
   useEffect(() => {
     let active = true;
-    setViews(loadBoardViews());
     // Assignee picker degrades silently: me/unassigned/all keep working.
     (async () => {
       try {
@@ -237,8 +238,8 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
   // Stale threshold follows the Recency filter, defaulting to 7 days.
   const staleCutoff = useMemo(() => {
     const days = Number(applied.staleDays) || 7;
-    return Date.now() - days * 86400e3;
-  }, [applied.staleDays]);
+    return mountedAt - days * 86400e3;
+  }, [applied.staleDays, mountedAt]);
 
   function isStale(lead: Lead): boolean {
     return new Date(lead.updated_at).getTime() < staleCutoff;
