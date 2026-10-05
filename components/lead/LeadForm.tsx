@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { LEAD_LIST_PATH } from "@/app/sales/views/leads/paths";
 import type { Lead } from "@/app/sales/models/LeadModel";
 import type { LeadMetadata } from "@/app/sales/models/LeadMetadataModel";
@@ -10,19 +10,30 @@ import type { LeadMetadataField } from "@/app/sales/models/LeadMetadataFieldMode
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
 import type { User } from "@/app/base/models/UserModel";
 import { AuthComponent } from "@/components/AuthComponent";
+import { SelectField, TextAreaField, TextField } from "@/components/FormField";
+import { UploadButton } from "@/components/UploadButton";
 import type { SessionInfo } from "@/libraries/Auth";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
-import { hasPermission } from "@/libraries/Permissions";
 
 const LEADS_API = "/sales/api/v1/leads";
 const USERS_API = "/base/api/v1/users";
-const UPLOAD_API = "/base/api/v1/tools/upload-file";
 const UPLOAD_PERMISSION = "base:tools:upload:upload";
 const NEW_FIELD_VALUE = "__new__";
-const CLIENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
+const SOURCE_OPTIONS = [
+  { value: "website", label: "website" },
+  { value: "referral", label: "referral" },
+  { value: "ads", label: "ads" },
+  { value: "cold_call", label: "cold_call" },
+  { value: "event", label: "event" },
+  { value: "other", label: "other" },
+];
+
+const rowLabelClass = "mb-1 block text-xs font-medium text-slate-600";
+const rowInputClass =
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500";
+const rowValueInputClass =
+  "w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500";
 
 type MetadataRow = {
   key: string;
@@ -67,14 +78,12 @@ export function LeadForm({
   const [assigneeId, setAssigneeId] = useState(initial?.assigned_to ?? "");
   const [assigneesLoading, setAssigneesLoading] = useState(true);
   const [assigneesError, setAssigneesError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploadTargetKey, setUploadTargetKey] = useState<string | null>(null);
-  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
-  const canUpload = hasPermission(session.user, session.permissions, [UPLOAD_PERMISSION]);
+  const [statusesError, setStatusesError] = useState("");
+  const [fieldsError, setFieldsError] = useState("");
   const [rows, setRows] = useState<MetadataRow[]>(() => {
     if (initial?.metadata && initial.metadata.length > 0) {
-      return initial.metadata.map((item) => ({
-        key: item.uuid,
+      return initial.metadata.map((item, index) => ({
+        key: item.uuid ?? `initial-${index}-${Math.random().toString(36).slice(2)}`,
         uuid: item.uuid,
         field_id: item.lead_metadata_field_id,
         value: item.value,
@@ -96,7 +105,10 @@ export function LeadForm({
     let active = true;
     (async () => {
       try {
-        const [statusEnvelope, fieldEnvelope, userEnvelope] = await Promise.all([
+        // Independent degrade: a statuses or fields failure surfaces its own
+        // error and must not block the other dropdowns (free-form fallbacks
+        // — status text input, add-new-field — stay usable).
+        const [statusResult, fieldResult, userResult] = await Promise.allSettled([
           getEncrypted<LeadStatus[]>(`/sales/api/v1/lead-statuses?limit=500&sortProperty=name&sortDirection=asc`),
           getEncrypted<LeadMetadataField[]>(`/sales/api/v1/lead-metadata-fields?limit=500&sortProperty=name&sortDirection=asc`),
           getEncrypted<User[]>(`${USERS_API}?sortProperty=name&sortDirection=asc&limit=100&filter[org_scope]=actor`),
@@ -104,20 +116,35 @@ export function LeadForm({
         if (!active) {
           return;
         }
-        if (statusEnvelope.success) {
-          setStatuses((statusEnvelope.data ?? []).filter((row) => row.status !== "deleted"));
+        if (statusResult.status === "fulfilled" && statusResult.value.success) {
+          setStatuses((statusResult.value.data ?? []).filter((row) => row.status !== "deleted"));
+        } else {
+          setStatusesError(
+            (statusResult.status === "fulfilled" ? statusResult.value.message : null) ||
+              "Failed to load statuses. You can still type a status manually.",
+          );
         }
-        if (fieldEnvelope.success) {
-          setFields((fieldEnvelope.data ?? []).filter((row) => row.status !== "deleted"));
+        if (fieldResult.status === "fulfilled" && fieldResult.value.success) {
+          setFields((fieldResult.value.data ?? []).filter((row) => row.status !== "deleted"));
+        } else {
+          setFieldsError(
+            (fieldResult.status === "fulfilled" ? fieldResult.value.message : null) ||
+              "Failed to load metadata fields. You can still add a new field manually.",
+          );
         }
-        if (!userEnvelope.success) {
-          setAssigneesError(userEnvelope.message || "Failed to load users.");
-          return;
+        if (userResult.status === "fulfilled" && userResult.value.success) {
+          setAssignees(userResult.value.data ?? []);
+        } else {
+          setAssigneesError(
+            (userResult.status === "fulfilled" ? userResult.value.message : null) ||
+              "Failed to load users.",
+          );
         }
-        setAssignees(userEnvelope.data ?? []);
       } catch {
         if (active) {
-          setAssigneesError("Failed to load users. Please try again.");
+          setStatusesError((current) => current || "Failed to load statuses. You can still type a status manually.");
+          setFieldsError((current) => current || "Failed to load metadata fields. You can still add a new field manually.");
+          setAssigneesError((current) => current || "Failed to load users. Please try again.");
         }
         // Dropdowns stay empty; user can still type free-form values.
       } finally {
@@ -136,65 +163,7 @@ export function LeadForm({
   }
 
   function removeRow(key: string) {
-    setRows((current) => (current.length <= 1 ? current : current.filter((row) => row.key !== key)));
-  }
-
-  function readAsBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result ?? "");
-        const comma = result.indexOf(",");
-        resolve(comma >= 0 ? result.slice(comma + 1) : result);
-      };
-      reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function pickFile(key: string) {
-    if (!canUpload) {
-      return;
-    }
-    setUploadTargetKey(key);
-    fileInputRef.current?.click();
-  }
-
-  async function handleFilePicked(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    // Reset so picking the same file twice still fires onChange.
-    event.target.value = "";
-    const target = uploadTargetKey;
-    setUploadTargetKey(null);
-    if (!file || !target) {
-      return;
-    }
-    if (!canUpload) {
-      setError("You do not have permission to upload files.");
-      return;
-    }
-    if (file.size > CLIENT_MAX_FILE_BYTES) {
-      setError(`File exceeds the ${CLIENT_MAX_FILE_BYTES} byte limit.`);
-      return;
-    }
-    setUploadingKey(target);
-    setError("");
-    try {
-      const data = await readAsBase64(file);
-      const envelope = await postEncrypted<{ key: string; url: string }>(UPLOAD_API, {
-        filename: file.name,
-        content_type: file.type || "application/octet-stream",
-        data,
-      });
-      if (!envelope.success) {
-        throw new Error(envelope.message || "Failed to upload file.");
-      }
-      updateRow(target, { value: envelope.data.url });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload file. Please try again.");
-    } finally {
-      setUploadingKey(null);
-    }
+    setRows((current) => current.filter((row) => row.key !== key));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -217,10 +186,14 @@ export function LeadForm({
       };
       if (typeof payload.value === "number" && Number.isNaN(payload.value)) {
         setError("Value must be a number.");
-        setIsPending(false);
         return;
       }
 
+      // Omission = delete: LeadUpdateUseCase syncs metadata with full
+      // replacement, so rows left out of this payload are soft-deleted
+      // server-side (sending metadata: [] deletes all). Empty-value rows are
+      // dropped here — a blank value cannot clear a row (blank patch values
+      // are ignored server-side), so use Delete to remove a row instead.
       const metadata = rows
         .map((row) => {
           const value = row.value.trim();
@@ -247,7 +220,6 @@ export function LeadForm({
 
       if (metadata.some((item) => (item as Record<string, unknown>).invalid)) {
         setError("Each metadata row needs a field (or a new field name) and a value.");
-        setIsPending(false);
         return;
       }
       (payload as Record<string, unknown>).metadata = metadata;
@@ -281,89 +253,57 @@ export function LeadForm({
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
           <div className="grid gap-5 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Name</span>
-              <input type="text" name="name" required minLength={2} defaultValue={initial?.name ?? ""} placeholder="Jane Doe" className={inputClass} />
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Email</span>
-              <input type="email" name="email" required defaultValue={initial?.email ?? ""} placeholder="jane@company.com" className={inputClass} />
-            </label>
+            <TextField label="Name" name="name" required minLength={2} defaultValue={initial?.name ?? ""} placeholder="Jane Doe" />
+            <TextField label="Email" name="email" type="email" required defaultValue={initial?.email ?? ""} placeholder="jane@company.com" />
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Phone number</span>
-              <input type="text" name="phone_number" required minLength={6} defaultValue={initial?.phone_number ?? ""} placeholder="+628123456789" className={inputClass} />
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Company</span>
-              <input type="text" name="company" defaultValue={initial?.company ?? ""} placeholder="Acme Inc" className={inputClass} />
-            </label>
+            <TextField label="Phone number" name="phone_number" required minLength={6} defaultValue={initial?.phone_number ?? ""} placeholder="+628123456789" />
+            <TextField label="Company" name="company" defaultValue={initial?.company ?? ""} placeholder="Acme Inc" />
           </div>
 
           <div className="grid gap-5 sm:grid-cols-3">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Source</span>
-              <select name="source" defaultValue={initial?.source ?? "website"} className={inputClass}>
-                <option value="website">website</option>
-                <option value="referral">referral</option>
-                <option value="ads">ads</option>
-                <option value="cold_call">cold_call</option>
-                <option value="event">event</option>
-                <option value="other">other</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Status</span>
-              {statuses.length > 0 ? (
-                <select name="status" defaultValue={initial?.status ?? statuses[0]?.name ?? "new"} className={inputClass}>
-                  {statuses.map((option) => (
-                    <option key={option.uuid} value={option.name}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input type="text" name="status" defaultValue={initial?.status ?? "new"} minLength={2} className={inputClass} />
-              )}
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Estimated deal value</span>
-              <input
-                type="number"
-                name="value"
-                min={0}
-                step={1}
-                defaultValue={typeof initial?.value === "number" ? initial.value : ""}
-                placeholder="0"
-                className={inputClass}
+            <SelectField label="Source" name="source" defaultValue={initial?.source ?? "website"} options={SOURCE_OPTIONS} />
+            {statuses.length > 0 ? (
+              <SelectField
+                label="Status"
+                name="status"
+                defaultValue={initial?.status ?? statuses[0]?.name ?? "new"}
+                options={statuses.map((option) => ({ value: option.name, label: option.name }))}
               />
-            </label>
+            ) : (
+              <TextField label="Status" name="status" defaultValue={initial?.status ?? "new"} minLength={2} />
+            )}
+            <TextField
+              label="Estimated deal value"
+              name="value"
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={typeof initial?.value === "number" ? initial.value : ""}
+              placeholder="0"
+            />
           </div>
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Assigned to</span>
-            <select
-              name="assigned_to"
-              value={assigneeId}
-              onChange={(event) => setAssigneeId(event.target.value)}
-              disabled={assigneesLoading}
-              className={inputClass}
-            >
-              <option value="">
-                {assigneesLoading ? "Loading users..." : "— Unassigned —"}
-              </option>
-              {assigneeItems.map((option) => (
-                <option key={option.uuid} value={option.uuid}>
-                  {option.name}{option.email ? ` (${option.email})` : ""}
-                </option>
-              ))}
-            </select>
-            <span className="mt-2 block text-xs text-slate-500">
-              Only users in your organization are listed. Users without an organization see only unlinked users.
-            </span>
-          </label>
+          {statusesError ? (
+            <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {statusesError}
+            </p>
+          ) : null}
+
+          <SelectField
+            label="Assigned to"
+            name="assigned_to"
+            value={assigneeId}
+            onChange={(event) => setAssigneeId(event.target.value)}
+            disabled={assigneesLoading}
+            options={assigneeItems.map((option) => ({
+              value: option.uuid,
+              label: `${option.name}${option.email ? ` (${option.email})` : ""}`,
+            }))}
+            placeholder={assigneesLoading ? "Loading users..." : "— Unassigned —"}
+            hint="Only users in your organization are listed. Users without an organization see only unlinked users."
+          />
 
           {assigneesError ? (
             <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -371,16 +311,18 @@ export function LeadForm({
             </p>
           ) : null}
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Notes</span>
-            <textarea name="notes" rows={3} defaultValue={initial?.notes ?? ""} placeholder="Context about this lead..." className={inputClass} />
-          </label>
+          <TextAreaField label="Notes" name="notes" rows={3} defaultValue={initial?.notes ?? ""} placeholder="Context about this lead..." />
 
           <div className="rounded-2xl border border-slate-200 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Leads metadata</h2>
                 <p className="mt-0.5 text-xs text-slate-500">Pick a field from the dropdown or add a new one on the fly.</p>
+                {fieldsError ? (
+                  <p role="alert" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {fieldsError}
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -390,20 +332,12 @@ export function LeadForm({
                 Add row
               </button>
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              aria-hidden
-              tabIndex={-1}
-              onChange={handleFilePicked}
-            />
             <div className="mt-4 space-y-3">
               {rows.map((row, index) => (
                 <div key={row.key} className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_auto]">
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-slate-600">Field #{index + 1}</span>
-                    <select
+                  <div>
+                    <SelectField
+                      label={`Field #${index + 1}`}
                       value={row.isNew ? NEW_FIELD_VALUE : row.field_id}
                       onChange={(event) => {
                         const selected = event.target.value;
@@ -413,52 +347,45 @@ export function LeadForm({
                           updateRow(row.key, { isNew: false, field_id: selected, newName: "" });
                         }
                       }}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
-                    >
-                      <option value="">Select field...</option>
-                      {fields.map((field) => (
-                        <option key={field.uuid} value={field.uuid}>
-                          {field.name}
-                        </option>
-                      ))}
-                      <option value={NEW_FIELD_VALUE}>+ Add new field...</option>
-                    </select>
+                      options={[
+                        ...fields.map((field) => ({ value: field.uuid, label: field.name })),
+                        { value: NEW_FIELD_VALUE, label: "+ Add new field..." },
+                      ]}
+                      placeholder="Select field..."
+                      labelClassName={rowLabelClass}
+                      className={rowInputClass}
+                    />
                     {row.isNew ? (
-                      <input
-                        type="text"
-                        value={row.newName}
-                        onChange={(event) => updateRow(row.key, { newName: event.target.value })}
-                        placeholder="New field name, e.g. Budget"
-                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
-                      />
+                      <div className="mt-2">
+                        <TextField
+                          value={row.newName}
+                          onChange={(event) => updateRow(row.key, { newName: event.target.value })}
+                          placeholder="New field name, e.g. Budget"
+                          className={rowInputClass}
+                        />
+                      </div>
                     ) : null}
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-slate-600">Value</span>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={row.value}
-                        onChange={(event) => updateRow(row.key, { value: event.target.value })}
-                        placeholder="Field value"
-                        className="w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
-                      />
+                  </div>
+                  <TextField
+                    label="Value"
+                    value={row.value}
+                    onChange={(event) => updateRow(row.key, { value: event.target.value })}
+                    placeholder="Field value"
+                    labelClassName={rowLabelClass}
+                    className={rowValueInputClass}
+                    action={
                       <AuthComponent
                         user={session.user}
                         permissions={session.permissions}
                         allowedPermissions={[UPLOAD_PERMISSION]}
                       >
-                        <button
-                          type="button"
-                          onClick={() => pickFile(row.key)}
-                          disabled={uploadingKey !== null}
-                          className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {uploadingKey === row.key ? "Uploading..." : "File"}
-                        </button>
+                        <UploadButton
+                          onUploaded={(url) => updateRow(row.key, { value: url })}
+                          onError={setError}
+                        />
                       </AuthComponent>
-                    </div>
-                  </label>
+                    }
+                  />
                   <div className="flex items-end">
                     <button
                       type="button"

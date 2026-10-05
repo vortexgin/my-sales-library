@@ -1,15 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import type { LeadActivity } from "@/app/sales/models/LeadActivityModel";
+import { DateTimeField, TextAreaField, TextField } from "@/components/FormField";
+import { UploadButton } from "@/components/UploadButton";
 import { getEncrypted, postEncrypted } from "@/libraries/EncryptedFetch";
-
-const UPLOAD_API = "/base/api/v1/tools/upload-file";
-const CLIENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
-
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
 
 export function LeadActivityModal({
   leadUuid,
@@ -27,62 +23,12 @@ export function LeadActivityModal({
   const [error, setError] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [attachment, setAttachment] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Portalled to document.body: ancestor cards use backdrop-blur, which
   // creates a containing block that would otherwise trap this fixed overlay
   // behind the activity container.
   if (!open || typeof document === "undefined") {
     return null;
-  }
-
-  function readAsBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result ?? "");
-        const comma = result.indexOf(",");
-        resolve(comma >= 0 ? result.slice(comma + 1) : result);
-      };
-      reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function handleFilePicked(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    // Reset so picking the same file twice still fires onChange.
-    event.target.value = "";
-    if (!file) {
-      return;
-    }
-    if (!canUpload) {
-      setError("You do not have permission to upload files.");
-      return;
-    }
-    if (file.size > CLIENT_MAX_FILE_BYTES) {
-      setError(`File exceeds the ${CLIENT_MAX_FILE_BYTES} byte limit.`);
-      return;
-    }
-    setUploading(true);
-    setError("");
-    try {
-      const data = await readAsBase64(file);
-      const envelope = await postEncrypted<{ key: string; url: string }>(UPLOAD_API, {
-        filename: file.name,
-        content_type: file.type || "application/octet-stream",
-        data,
-      });
-      if (!envelope.success) {
-        throw new Error(envelope.message || "Failed to upload file.");
-      }
-      setAttachment(envelope.data.url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload file. Please try again.");
-    } finally {
-      setUploading(false);
-    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -129,65 +75,33 @@ export function LeadActivityModal({
         <h2 className="text-lg font-semibold text-slate-900">Create activity.</h2>
         <p className="mt-1 text-sm text-slate-500">Log a call, visit, or meeting for this lead.</p>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">PIC</span>
-            <input type="text" name="pic" required minLength={2} placeholder="Person in charge" className={inputClass} />
-          </label>
+          <TextField label="PIC" name="pic" size="sm" required minLength={2} placeholder="Person in charge" />
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Phone</span>
-              <input type="text" name="phone" required minLength={6} placeholder="+628..." className={inputClass} />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Email</span>
-              <input type="email" name="email" required placeholder="pic@company.com" className={inputClass} />
-            </label>
+            <TextField label="Phone" name="phone" size="sm" required minLength={6} placeholder="+628..." />
+            <TextField label="Email" name="email" type="email" size="sm" required placeholder="pic@company.com" />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Meeting start</span>
-              <input type="datetime-local" name="meeting_start" required className={inputClass} />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Meeting end (optional)</span>
-              <input type="datetime-local" name="meeting_end" className={inputClass} />
-            </label>
+            <DateTimeField label="Meeting start" name="meeting_start" size="sm" required />
+            <DateTimeField label="Meeting end (optional)" name="meeting_end" size="sm" />
           </div>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">Notes</span>
-            <textarea name="notes" required minLength={2} rows={3} placeholder="What was discussed?" className={inputClass} />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">Attachment URL (optional)</span>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                name="attachment"
-                value={attachment}
-                onChange={(event) => setAttachment(event.target.value)}
-                placeholder="https://..."
-                className="w-full min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-              />
-              {canUpload ? (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading || isPending}
-                  className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {uploading ? "Uploading..." : "File"}
-                </button>
-              ) : null}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              aria-hidden
-              tabIndex={-1}
-              onChange={handleFilePicked}
-            />
-          </label>
+          <TextAreaField label="Notes" name="notes" size="sm" required minLength={2} rows={3} placeholder="What was discussed?" />
+          <TextField
+            label="Attachment URL (optional)"
+            name="attachment"
+            size="sm"
+            value={attachment}
+            onChange={(event) => setAttachment(event.target.value)}
+            placeholder="https://..."
+            action={
+              canUpload ? (
+                <UploadButton
+                  onUploaded={setAttachment}
+                  onError={setError}
+                  disabled={isPending}
+                />
+              ) : undefined
+            }
+          />
           {error ? (
             <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}

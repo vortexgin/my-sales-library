@@ -6,11 +6,9 @@ import { useState, type FormEvent } from "react";
 import { LEAD_STATUS_LIST_PATH } from "@/app/sales/views/lead-statuses/paths";
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
 import { postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
+import { SelectField, TextAreaField, TextField } from "@/components/FormField";
 
 const API_PATH = "/sales/api/v1/lead-statuses";
-
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
 
 export function LeadStatusForm({
   mode,
@@ -67,39 +65,35 @@ export function LeadStatusForm({
         </h1>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Name</span>
-            <input
-              type="text"
-              name="name"
-              required
-              minLength={2}
-              defaultValue={initial?.name ?? ""}
-              placeholder="e.g. Qualified"
-              className={inputClass}
-            />
-          </label>
+          <TextField
+            label="Name"
+            type="text"
+            name="name"
+            required
+            minLength={2}
+            defaultValue={initial?.name ?? ""}
+            placeholder="e.g. Qualified"
+          />
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Description</span>
-            <textarea
-              name="description"
-              required
-              minLength={2}
-              rows={3}
-              defaultValue={initial?.description ?? ""}
-              placeholder="e.g. Lead is ready for proposal"
-              className={inputClass}
-            />
-          </label>
+          <TextAreaField
+            label="Description"
+            name="description"
+            required
+            minLength={2}
+            rows={3}
+            defaultValue={initial?.description ?? ""}
+            placeholder="e.g. Lead is ready for proposal"
+          />
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-slate-700">Status</span>
-            <select name="status" defaultValue={initial?.status ?? "active"} className={inputClass}>
-              <option value="active">active</option>
-              <option value="inactive">inactive</option>
-            </select>
-          </label>
+          <SelectField
+            label="Status"
+            name="status"
+            defaultValue={initial?.status ?? "active"}
+            options={[
+              { value: "active", label: "active" },
+              { value: "inactive", label: "inactive" },
+            ]}
+          />
 
           {error ? (
             <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
