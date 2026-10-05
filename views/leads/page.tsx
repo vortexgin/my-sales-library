@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { AuthComponent } from "@/components/AuthComponent";
 import { AccessDenied } from "@/components/AccessDenied";
 import { LeadBoard } from "@/app/sales/components/lead/LeadBoard";
@@ -30,7 +31,9 @@ export default async function LeadListPage() {
             </div>
           </div>
 
-          <LeadBoard session={session} />
+          <Suspense fallback={<p className="mt-6 text-sm text-slate-500">Loading board...</p>}>
+            <LeadBoard session={session} />
+          </Suspense>
         </div>
       </div>
     </AuthComponent>

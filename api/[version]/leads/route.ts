@@ -13,14 +13,18 @@ async function handleGet(request: NextRequest) {
   try {
     await connectDatabase();
     const params = request.nextUrl.searchParams;
+    // Forward every filter[*] param so Joi (unknown(false)) rejects
+    // unknown keys with 400 instead of silently ignoring them.
+    const filter: Record<string, string> = {};
+    params.forEach((value, key) => {
+      const match = key.match(/^filter\[(.+)\]$/);
+      if (match && value.trim() !== "") {
+        filter[match[1]] = value;
+      }
+    });
     const leads = await new LeadListUseCase().exec(
       {
-        filter: {
-          q: queryParam(params, "filter[q]"),
-          status: queryParam(params, "filter[status]"),
-          source: queryParam(params, "filter[source]"),
-          assigned_to: queryParam(params, "filter[assigned_to]"),
-        },
+        filter,
         sortProperty: queryParam(params, "sortProperty"),
         sortDirection: queryParam(params, "sortDirection"),
         offset: queryParam(params, "offset"),

@@ -15,6 +15,11 @@ export type ListLeadsFilter = {
   status?: string;
   source?: string;
   assigned_to?: string;
+  assigned?: string;
+  value_min?: number;
+  value_max?: number;
+  updated_before?: string;
+  stale_days?: number;
 };
 
 export type ListLeadsInput = {
@@ -34,6 +39,11 @@ export type ListLeadsQuery = {
   status?: string;
   source?: string;
   assigned_to?: string;
+  assigned?: "me" | "unassigned" | "all";
+  value_min?: number;
+  value_max?: number;
+  updated_before?: string;
+  stale_days?: number;
   sortProperty: string;
   sortDirection: "ASC" | "DESC";
   offset: number;
@@ -63,8 +73,13 @@ const listLeadsSchema = Joi.object({
     phone: Joi.string().trim().allow("").optional(),
     company: Joi.string().trim().allow("").optional(),
     status: Joi.string().trim().allow("").optional(),
-    source: Joi.string().trim().allow("").optional(),
+    source: Joi.string().valid("website", "referral", "ads", "cold_call", "event", "other").allow("").optional(),
     assigned_to: Joi.string().uuid({ version: "uuidv4" }).optional(),
+    assigned: Joi.string().valid("me", "unassigned", "all").optional(),
+    value_min: Joi.number().integer().min(0).optional(),
+    value_max: Joi.number().integer().min(0).optional(),
+    updated_before: Joi.date().iso().optional(),
+    stale_days: Joi.number().integer().min(1).max(90).optional(),
   }).optional(),
   sortProperty: Joi.string()
     .valid(...Object.keys(SORTABLE_COLUMNS))
@@ -95,6 +110,11 @@ export class LeadListUseCase extends BaseUseCase<ListLeadsInput | void, Lead[], 
       status: filter.status?.trim() || undefined,
       source: filter.source?.trim() || undefined,
       assigned_to: filter.assigned_to || undefined,
+      assigned: filter.assigned as ListLeadsQuery["assigned"],
+      value_min: filter.value_min,
+      value_max: filter.value_max,
+      updated_before: filter.updated_before,
+      stale_days: filter.stale_days,
       sortProperty: SORTABLE_COLUMNS[validated.sortProperty.toLowerCase()] ?? "created_at",
       sortDirection: validated.sortDirection.toUpperCase() as "ASC" | "DESC",
       offset: validated.offset,
@@ -146,7 +166,31 @@ export class LeadListUseCase extends BaseUseCase<ListLeadsInput | void, Lead[], 
     }
 
     if (context.assigned_to) {
+      // Explicit assignee wins over the assigned shorthand.
       conditions.push({ assigned_to: context.assigned_to });
+    } else if (context.assigned === "me") {
+      const actorUuid = (context.actor as Record<string, unknown> | null)?.uuid;
+      conditions.push({ assigned_to: typeof actorUuid === "string" ? actorUuid : "__none__" });
+    } else if (context.assigned === "unassigned") {
+      conditions.push({ assigned_to: null });
+    }
+
+    if (typeof context.value_min === "number" || typeof context.value_max === "number") {
+      // Rows with null value are excluded when a value bound is present.
+      if (typeof context.value_min === "number" && typeof context.value_max === "number") {
+        conditions.push({ value: { [Op.gte]: context.value_min, [Op.lte]: context.value_max } });
+      } else if (typeof context.value_min === "number") {
+        conditions.push({ value: { [Op.gte]: context.value_min } });
+      } else {
+        conditions.push({ value: { [Op.lte]: context.value_max as number } });
+      }
+    }
+
+    if (context.updated_before || context.stale_days) {
+      const cutoff = context.updated_before
+        ? new Date(context.updated_before)
+        : new Date(Date.now() - (context.stale_days as number) * 86400e3);
+      conditions.push({ updated_at: { [Op.lt]: cutoff } });
     }
 
     if (context.name) {

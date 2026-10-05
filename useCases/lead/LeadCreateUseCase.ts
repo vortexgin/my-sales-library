@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import Joi, { Schema } from "joi";
 import LeadModelFactory, { LeadModel, type CreateLeadInput, type Lead } from "@/app/sales/models/LeadModel";
+import { insertLeadRow } from "@/app/sales/useCases/lead/insertLeadRow";
 import LeadMetadataModelFactory, { LeadMetadataModel } from "@/app/sales/models/LeadMetadataModel";
 import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel } from "@/app/sales/models/LeadMetadataFieldModel";
 import UserModelFactory, { UserModel } from "@/app/base/models/UserModel";
@@ -87,23 +88,7 @@ export class LeadCreateUseCase extends BaseUseCase<CreateLeadInput, Lead, LeadCr
 
   protected async execute(context: LeadCreateContext): Promise<Lead> {
     const { input, organizationId, actor } = context;
-    await LeadModelFactory();
-    const lead = await LeadModel.create({
-      uuid: randomUUID(),
-      name: input.name?.trim(),
-      email: input.email?.trim().toLowerCase(),
-      phone_number: input.phone_number?.trim(),
-      company: input.company?.trim() || null,
-      source: input.source ?? "website",
-      status: input.status ?? "new",
-      value: typeof input.value === "number" ? input.value : null,
-      assigned_to: input.assigned_to ?? null,
-      organization_id: organizationId ?? null,
-      notes: input.notes?.trim() || null,
-      deleted_at: null,
-    });
-
-    const api = LeadModel.toApi(lead.toJSON());
+    const api = await insertLeadRow(input, organizationId);
 
     // Nested metadata insert (also supports on-the-fly field creation).
     const metadata = input.metadata;

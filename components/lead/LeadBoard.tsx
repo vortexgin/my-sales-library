@@ -1,15 +1,36 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { Lead } from "@/app/sales/models/LeadModel";
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
+import type { User } from "@/app/base/models/UserModel";
 import type { SessionInfo } from "@/libraries/Auth";
 import { hasPermission } from "@/libraries/Permissions";
 import { getEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
+import {
+  deleteBoardView,
+  EMPTY_BOARD_FILTERS,
+  filtersFromSearchParams,
+  filtersToSearchParams,
+  loadBoardViews,
+  saveBoardView,
+  type BoardFilters,
+  type SavedBoardView,
+} from "@/app/sales/components/lead/LeadFilterViews";
 
 const LEADS_API = "/sales/api/v1/leads";
 const STATUS_API = "/sales/api/v1/lead-statuses";
+const USERS_API = "/base/api/v1/users";
+
+const SOURCE_OPTIONS = ["website", "referral", "ads", "cold_call", "event", "other"];
+const STALE_OPTIONS = [
+  { value: "", label: "Any recency" },
+  { value: "7", label: "Stale > 7d" },
+  { value: "14", label: "Stale > 14d" },
+  { value: "30", label: "Stale > 30d" },
+];
 
 async function fetchStatuses(): Promise<LeadStatus[]> {
   const params = new URLSearchParams({ limit: "500", sortProperty: "created_at", sortDirection: "asc" });
@@ -20,10 +41,27 @@ async function fetchStatuses(): Promise<LeadStatus[]> {
   return (envelope.data ?? []).filter((row) => row.status !== "deleted");
 }
 
-async function fetchLeads(keyword: string): Promise<Lead[]> {
+async function fetchLeads(filters: BoardFilters): Promise<Lead[]> {
   const params = new URLSearchParams({ limit: "500", sortProperty: "created_at", sortDirection: "desc" });
-  if (keyword) {
-    params.set("filter[q]", keyword);
+  if (filters.q.trim()) {
+    params.set("filter[q]", filters.q.trim());
+  }
+  if (filters.source) {
+    params.set("filter[source]", filters.source);
+  }
+  if (filters.assigned === "specific" && filters.assignedTo) {
+    params.set("filter[assigned_to]", filters.assignedTo);
+  } else if (filters.assigned === "me" || filters.assigned === "unassigned") {
+    params.set("filter[assigned]", filters.assigned);
+  }
+  if (filters.valueMin.trim()) {
+    params.set("filter[value_min]", filters.valueMin.trim());
+  }
+  if (filters.valueMax.trim()) {
+    params.set("filter[value_max]", filters.valueMax.trim());
+  }
+  if (filters.staleDays) {
+    params.set("filter[stale_days]", filters.staleDays);
   }
   const envelope = await getEncrypted<Lead[]>(`${LEADS_API}?${params.toString()}`);
   if (!envelope.success) {
@@ -33,25 +71,37 @@ async function fetchLeads(keyword: string): Promise<Lead[]> {
 }
 
 export function LeadBoard({ session }: { session: SessionInfo }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [statuses, setStatuses] = useState<LeadStatus[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [moveError, setMoveError] = useState("");
-  const [draftQ, setDraftQ] = useState("");
-  const [appliedQ, setAppliedQ] = useState("");
+  const [drafts, setDrafts] = useState<BoardFilters>(() => ({
+    ...EMPTY_BOARD_FILTERS,
+    ...filtersFromSearchParams(searchParams),
+  }));
+  const [applied, setApplied] = useState<BoardFilters>(() => ({
+    ...EMPTY_BOARD_FILTERS,
+    ...filtersFromSearchParams(searchParams),
+  }));
+  const [views, setViews] = useState<SavedBoardView[]>([]);
+  const [viewName, setViewName] = useState("");
   const [dragUuid, setDragUuid] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const canUpdate = hasPermission(session.user, session.permissions, ["sales:lead:view:update"]);
   const canCreate = hasPermission(session.user, session.permissions, ["sales:lead:create:create"]);
 
-  const load = useCallback(async (keyword: string) => {
+  const load = useCallback(async (filters: BoardFilters) => {
     setLoading(true);
     setError("");
     // Independent fetches: a statuses outage must not discard leads
     // the user is authorized to see (and vice versa).
-    const [statusResult, leadResult] = await Promise.allSettled([fetchStatuses(), fetchLeads(keyword)]);
+    const [statusResult, leadResult] = await Promise.allSettled([fetchStatuses(), fetchLeads(filters)]);
     if (statusResult.status === "fulfilled") {
       setStatuses(statusResult.value);
     } else {
@@ -70,17 +120,72 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    load(appliedQ);
-  }, [appliedQ, load]);
+    load(applied);
+  }, [applied, load]);
+
+  useEffect(() => {
+    let active = true;
+    setViews(loadBoardViews());
+    // Assignee picker degrades silently: me/unassigned/all keep working.
+    (async () => {
+      try {
+        const envelope = await getEncrypted<User[]>(
+          `${USERS_API}?sortProperty=name&sortDirection=asc&limit=100&filter[org_scope]=actor`,
+        );
+        if (active && envelope.success) {
+          setUsers(envelope.data ?? []);
+        }
+      } catch {
+        // Users dropdown stays limited to me/unassigned/all.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function syncUrl(filters: BoardFilters) {
+    const query = filtersToSearchParams(filters).toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
+
+  function setDraft<K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) {
+    setDrafts((current) => ({ ...current, [key]: value }));
+  }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setAppliedQ(draftQ.trim());
+    setApplied({ ...drafts });
+    syncUrl(drafts);
   }
 
   function resetFilters() {
-    setDraftQ("");
-    setAppliedQ("");
+    setDrafts({ ...EMPTY_BOARD_FILTERS });
+    setApplied({ ...EMPTY_BOARD_FILTERS });
+    syncUrl(EMPTY_BOARD_FILTERS);
+  }
+
+  function applyView(name: string) {
+    const view = views.find((entry) => entry.name === name);
+    if (!view) {
+      return;
+    }
+    setDrafts({ ...view.filters });
+    setApplied({ ...view.filters });
+    syncUrl(view.filters);
+  }
+
+  function handleSaveView() {
+    const name = viewName.trim();
+    if (!name) {
+      return;
+    }
+    setViews(saveBoardView(name, drafts));
+    setViewName("");
+  }
+
+  function handleDeleteView(name: string) {
+    setViews(deleteBoardView(name));
   }
 
   async function moveLead(leadUuid: string, targetStatus: string) {
@@ -105,49 +210,230 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
     }
   }
 
-  const columns = statuses.map((status) => ({
-    key: status.name,
-    title: status.name,
-    description: status.description,
-    leads: leads.filter((lead) => lead.status === status.name),
-  }));
-  const unmapped = leads.filter((lead) => !statuses.some((status) => status.name === lead.status));
-  if (unmapped.length > 0) {
-    columns.push({ key: "__other__", title: "Other", description: "Status not in master data.", leads: unmapped });
+  const columns = useMemo(() => {
+    const grouped = statuses.map((status) => {
+      const rows = leads.filter((lead) => lead.status === status.name);
+      return {
+        key: status.name,
+        title: status.name,
+        description: status.description,
+        leads: rows,
+        total: rows.reduce((sum, lead) => sum + (typeof lead.value === "number" ? lead.value : 0), 0),
+      };
+    });
+    const unmapped = leads.filter((lead) => !statuses.some((status) => status.name === lead.status));
+    if (unmapped.length > 0) {
+      grouped.push({
+        key: "__other__",
+        title: "Other",
+        description: "Status not in master data.",
+        leads: unmapped,
+        total: unmapped.reduce((sum, lead) => sum + (typeof lead.value === "number" ? lead.value : 0), 0),
+      });
+    }
+    return grouped;
+  }, [statuses, leads]);
+
+  // Stale threshold follows the Recency filter, defaulting to 7 days.
+  const staleCutoff = useMemo(() => {
+    const days = Number(applied.staleDays) || 7;
+    return Date.now() - days * 86400e3;
+  }, [applied.staleDays]);
+
+  function isStale(lead: Lead): boolean {
+    return new Date(lead.updated_at).getTime() < staleCutoff;
   }
 
   return (
     <div>
-      <form onSubmit={applyFilters} className="mt-6 flex flex-row gap-3">
-        <input
-          type="search"
-          value={draftQ}
-          onChange={(event) => setDraftQ(event.target.value)}
-          placeholder="Search name, email, phone, company..."
-          aria-label="Search leads"
-          className="w-full flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-        />
-        <div className="flex shrink-0 gap-2">
-          <button
-            type="submit"
-            className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+      <form onSubmit={applyFilters} className="mt-6 space-y-3">
+        <div className="flex flex-row gap-3">
+          <input
+            type="search"
+            value={drafts.q}
+            onChange={(event) => setDraft("q", event.target.value)}
+            placeholder="Search name, email, phone, company..."
+            aria-label="Search leads"
+            className="w-full flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+          />
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+            >
+              Filter
+            </button>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              Reset
+            </button>
+            {canCreate ? (
+              <>
+                <Link
+                  href="/sales/views/leads/create"
+                  className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500"
+                >
+                  New lead
+                </Link>
+                <Link
+                  href="/sales/views/leads/import"
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  Import
+                </Link>
+              </>
+            ) : null}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Source</span>
+            <select
+              value={drafts.source}
+              onChange={(event) => setDraft("source", event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+            >
+              <option value="">All sources</option>
+              {SOURCE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Assigned</span>
+            <select
+              value={drafts.assigned}
+              onChange={(event) => {
+                const mode = event.target.value;
+                setDrafts((current) => ({
+                  ...current,
+                  assigned: mode,
+                  assignedTo: mode === "specific" ? current.assignedTo : "",
+                }));
+              }}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+            >
+              <option value="all">Everyone</option>
+              <option value="me">Mine</option>
+              <option value="unassigned">Unassigned</option>
+              <option value="specific">Specific user…</option>
+            </select>
+          </label>
+          {drafts.assigned === "specific" ? (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">User</span>
+              <select
+                value={drafts.assignedTo}
+                onChange={(event) => setDraft("assignedTo", event.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+              >
+                <option value="">Select user…</option>
+                {users.map((option) => (
+                  <option key={option.uuid} value={option.uuid}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Min value</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={drafts.valueMin}
+              onChange={(event) => setDraft("valueMin", event.target.value)}
+              placeholder="0"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Max value</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={drafts.valueMax}
+              onChange={(event) => setDraft("valueMax", event.target.value)}
+              placeholder="No max"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Recency</span>
+            <select
+              value={drafts.staleDays}
+              onChange={(event) => setDraft("staleDays", event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500"
+            >
+              {STALE_OPTIONS.map((option) => (
+                <option key={option.label} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Saved views"
+            value=""
+            onChange={(event) => {
+              if (event.target.value) {
+                applyView(event.target.value);
+                event.target.value = "";
+              }
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500"
           >
-            Filter
-          </button>
+            <option value="">Saved views…</option>
+            {views.map((view) => (
+              <option key={view.name} value={view.name}>
+                {view.name}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={viewName}
+            onChange={(event) => setViewName(event.target.value)}
+            placeholder="View name…"
+            aria-label="Saved view name"
+            className="w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+          />
           <button
             type="button"
-            onClick={resetFilters}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            onClick={handleSaveView}
+            disabled={!viewName.trim()}
+            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Reset
+            Save view
           </button>
-          {canCreate ? (
-            <Link
-              href="/sales/views/leads/create"
-              className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500"
+          {views.length > 0 ? (
+            <select
+              aria-label="Delete saved view"
+              value=""
+              onChange={(event) => {
+                if (event.target.value && window.confirm(`Delete view "${event.target.value}"?`)) {
+                  handleDeleteView(event.target.value);
+                }
+                event.target.value = "";
+              }}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 outline-none transition focus:border-blue-500"
             >
-              New lead
-            </Link>
+              <option value="">Delete view…</option>
+              {views.map((view) => (
+                <option key={view.name} value={view.name}>
+                  {view.name}
+                </option>
+              ))}
+            </select>
           ) : null}
         </div>
       </form>
@@ -200,7 +486,7 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold text-slate-900">{column.title}</h2>
                   <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
-                    {column.leads.length}
+                    {column.leads.length} · {column.total}
                   </span>
                 </div>
                 {column.description ? (
@@ -226,9 +512,11 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                         setDragUuid(null);
                         setDropTarget(null);
                       } : undefined}
-                      className={`rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-slate-300 hover:shadow ${
+                      className={`rounded-xl border bg-white p-3 shadow-sm transition hover:border-slate-300 hover:shadow ${
                         dragUuid === lead.uuid ? "opacity-50" : ""
-                      } ${canUpdate ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      } ${canUpdate ? "cursor-grab active:cursor-grabbing" : ""} ${
+                        !lead.assigned_to ? "ring-2 ring-amber-200" : "border-slate-200"
+                      }`}
                     >
                       <Link href={`/sales/views/leads/${lead.uuid}`} className="block">
                         <p className="font-medium text-slate-900 hover:text-blue-600">{lead.name}</p>
@@ -241,6 +529,16 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                           {typeof lead.value === "number" ? (
                             <span className="inline-flex rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
                               {lead.value}
+                            </span>
+                          ) : null}
+                          {!lead.assigned_to ? (
+                            <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
+                              Unassigned
+                            </span>
+                          ) : null}
+                          {isStale(lead) ? (
+                            <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-200">
+                              Stale
                             </span>
                           ) : null}
                         </div>
