@@ -18,7 +18,7 @@ export default async function LeadCreatePage() {
       allowedPermissions={["sales:lead:create:create"]}
       accessDeniedComponent={<AccessDenied />}
     >
-      <LeadForm mode="create" />
+      <LeadForm mode="create" session={session} />
     </AuthComponent>
   );
 }

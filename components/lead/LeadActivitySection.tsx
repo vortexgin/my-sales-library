@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import type { LeadActivity } from "@/app/sales/models/LeadActivityModel";
 import { getEncrypted, postEncrypted } from "@/libraries/EncryptedFetch";
+
+const UPLOAD_API = "/base/api/v1/tools/upload-file";
+const CLIENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
@@ -13,20 +16,73 @@ export function LeadActivityModal({
   open,
   onClose,
   onCreated,
+  canUpload,
 }: {
   leadUuid: string;
   open: boolean;
   onClose: () => void;
   onCreated: (activity: LeadActivity) => void;
+  canUpload: boolean;
 }) {
   const [error, setError] = useState("");
   const [isPending, setIsPending] = useState(false);
+  const [attachment, setAttachment] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Portalled to document.body: ancestor cards use backdrop-blur, which
   // creates a containing block that would otherwise trap this fixed overlay
   // behind the activity container.
   if (!open || typeof document === "undefined") {
     return null;
+  }
+
+  function readAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFilePicked(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Reset so picking the same file twice still fires onChange.
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    if (!canUpload) {
+      setError("You do not have permission to upload files.");
+      return;
+    }
+    if (file.size > CLIENT_MAX_FILE_BYTES) {
+      setError(`File exceeds the ${CLIENT_MAX_FILE_BYTES} byte limit.`);
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      const data = await readAsBase64(file);
+      const envelope = await postEncrypted<{ key: string; url: string }>(UPLOAD_API, {
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        data,
+      });
+      if (!envelope.success) {
+        throw new Error(envelope.message || "Failed to upload file.");
+      }
+      setAttachment(envelope.data.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload file. Please try again.");
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -103,7 +159,34 @@ export function LeadActivityModal({
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">Attachment URL (optional)</span>
-            <input type="text" name="attachment" placeholder="https://..." className={inputClass} />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                name="attachment"
+                value={attachment}
+                onChange={(event) => setAttachment(event.target.value)}
+                placeholder="https://..."
+                className="w-full min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+              />
+              {canUpload ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading || isPending}
+                  className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {uploading ? "Uploading..." : "File"}
+                </button>
+              ) : null}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              aria-hidden
+              tabIndex={-1}
+              onChange={handleFilePicked}
+            />
           </label>
           {error ? (
             <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -136,10 +219,12 @@ export function LeadActivityModal({
 export function LeadActivitySection({
   leadUuid,
   canCreate,
+  canUpload,
   onActivities,
 }: {
   leadUuid: string;
   canCreate: boolean;
+  canUpload: boolean;
   onActivities?: (activities: LeadActivity[]) => void;
 }) {
   const [activities, setActivities] = useState<LeadActivity[]>([]);
@@ -227,6 +312,16 @@ export function LeadActivitySection({
               <p className="mt-1 text-xs text-slate-500">
                 {activity.email} · {activity.phone}
               </p>
+              {activity.attachment ? (
+                <a
+                  href={activity.attachment}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  View attachment
+                </a>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -236,6 +331,7 @@ export function LeadActivitySection({
         leadUuid={leadUuid}
         open={modalOpen}
         onClose={() => setModalOpen(false)}
+        canUpload={canUpload}
         onCreated={(created) => {
           const next = [created, ...activities];
           setActivities(next);

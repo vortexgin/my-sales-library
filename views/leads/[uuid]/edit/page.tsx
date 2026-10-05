@@ -50,6 +50,7 @@ export default async function LeadEditPage({
       <LeadForm
         mode="edit"
         uuid={lead.uuid}
+        session={session}
         initial={{
           name: lead.name,
           email: lead.email,

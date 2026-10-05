@@ -13,12 +13,14 @@ export function LeadDetailClient({
   initialActivityUuids,
   initialFieldUuids,
   canCreateActivity,
+  canUpload,
 }: {
   leadUuid: string;
   initialMetadataUuids: string[];
   initialActivityUuids: string[];
   initialFieldUuids: string[];
   canCreateActivity: boolean;
+  canUpload: boolean;
 }) {
   const [activityUuids, setActivityUuids] = useState<string[]>(initialActivityUuids);
 
@@ -30,7 +32,7 @@ export function LeadDetailClient({
 
   return (
     <>
-      <LeadActivitySection leadUuid={leadUuid} canCreate={canCreateActivity} onActivities={handleActivities} />
+      <LeadActivitySection leadUuid={leadUuid} canCreate={canCreateActivity} canUpload={canUpload} onActivities={handleActivities} />
       <ActivityTimeline key={allUuids} entities={TIMELINE_ENTITIES} entityUuids={allUuids} />
     </>
   );

@@ -9,11 +9,15 @@ import type { LeadMetadata } from "@/app/sales/models/LeadMetadataModel";
 import type { LeadMetadataField } from "@/app/sales/models/LeadMetadataFieldModel";
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
 import type { User } from "@/app/base/models/UserModel";
+import { AuthComponent } from "@/components/AuthComponent";
+import type { SessionInfo } from "@/libraries/Auth";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
+import { hasPermission } from "@/libraries/Permissions";
 
 const LEADS_API = "/sales/api/v1/leads";
 const USERS_API = "/base/api/v1/users";
 const UPLOAD_API = "/base/api/v1/tools/upload-file";
+const UPLOAD_PERMISSION = "base:tools:upload:upload";
 const NEW_FIELD_VALUE = "__new__";
 const CLIENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -47,10 +51,12 @@ export function LeadForm({
   mode,
   uuid,
   initial,
+  session,
 }: {
   mode: "create" | "edit";
   uuid?: string;
   initial?: LeadFormInitial;
+  session: SessionInfo;
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -64,6 +70,7 @@ export function LeadForm({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadTargetKey, setUploadTargetKey] = useState<string | null>(null);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
+  const canUpload = hasPermission(session.user, session.permissions, [UPLOAD_PERMISSION]);
   const [rows, setRows] = useState<MetadataRow[]>(() => {
     if (initial?.metadata && initial.metadata.length > 0) {
       return initial.metadata.map((item) => ({
@@ -146,6 +153,9 @@ export function LeadForm({
   }
 
   function pickFile(key: string) {
+    if (!canUpload) {
+      return;
+    }
     setUploadTargetKey(key);
     fileInputRef.current?.click();
   }
@@ -157,6 +167,10 @@ export function LeadForm({
     const target = uploadTargetKey;
     setUploadTargetKey(null);
     if (!file || !target) {
+      return;
+    }
+    if (!canUpload) {
+      setError("You do not have permission to upload files.");
       return;
     }
     if (file.size > CLIENT_MAX_FILE_BYTES) {
@@ -429,14 +443,20 @@ export function LeadForm({
                         placeholder="Field value"
                         className="w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
                       />
-                      <button
-                        type="button"
-                        onClick={() => pickFile(row.key)}
-                        disabled={uploadingKey !== null}
-                        className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      <AuthComponent
+                        user={session.user}
+                        permissions={session.permissions}
+                        allowedPermissions={[UPLOAD_PERMISSION]}
                       >
-                        {uploadingKey === row.key ? "Uploading..." : "File"}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => pickFile(row.key)}
+                          disabled={uploadingKey !== null}
+                          className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {uploadingKey === row.key ? "Uploading..." : "File"}
+                        </button>
+                      </AuthComponent>
                     </div>
                   </label>
                   <div className="flex items-end">

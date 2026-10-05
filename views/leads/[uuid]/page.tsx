@@ -63,6 +63,9 @@ export default async function LeadDetailPage({
   const canCreateActivity = hasPermission(session.user, session.permissions, [
     "sales:lead-activity:create:create",
   ]);
+  const canUpload = hasPermission(session.user, session.permissions, [
+    "base:tools:upload:upload",
+  ]);
 
   return (
     <AuthComponent
@@ -148,6 +151,7 @@ export default async function LeadDetailPage({
           initialActivityUuids={activityUuids}
           initialFieldUuids={fieldUuids}
           canCreateActivity={canCreateActivity}
+          canUpload={canUpload}
         />
       </div>
     </AuthComponent>
