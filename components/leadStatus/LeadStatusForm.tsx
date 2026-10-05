@@ -46,7 +46,7 @@ export function LeadStatusForm({
         return;
       }
 
-      router.push(LEAD_STATUS_LIST_PATH);
+      router.push(mode === "create" ? LEAD_STATUS_LIST_PATH : `${LEAD_STATUS_LIST_PATH}/${uuid}`);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {

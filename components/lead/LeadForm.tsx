@@ -233,7 +233,7 @@ export function LeadForm({
         setError(envelope.message || `Failed to ${mode === "create" ? "create" : "update"} lead.`);
         return;
       }
-      router.push(LEAD_LIST_PATH);
+      router.push(mode === "create" ? LEAD_LIST_PATH : `${LEAD_LIST_PATH}/${uuid}`);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {

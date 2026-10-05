@@ -46,7 +46,7 @@ export function LeadMetadataFieldForm({
         return;
       }
 
-      router.push(LEAD_METADATA_FIELD_LIST_PATH);
+      router.push(mode === "create" ? LEAD_METADATA_FIELD_LIST_PATH : `${LEAD_METADATA_FIELD_LIST_PATH}/${uuid}`);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
