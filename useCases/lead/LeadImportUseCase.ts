@@ -5,11 +5,11 @@ import type { ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import { checkTransaction, settleTransaction, type TransactionBilling } from "@/useCases/TransactionUseCase";
 import DuplicateEntityException from "@/exceptions/DuplicateEntityException";
-import { insertLeadRow } from "@/app/sales/useCases/lead/insertLeadRow";
+import { insertLeadRow } from "@/app/sales/libraries/insertLeadRow";
 import {
   classifyImportRows,
 } from "@/app/sales/useCases/lead/LeadImportPreviewUseCase";
-import { leadImportEnvelopeSchema } from "@/app/sales/useCases/lead/leadImportRow";
+import { leadImportEnvelopeSchema } from "@/app/sales/libraries/leadImportRow";
 
 export type ImportSkipped = {
   index: number;

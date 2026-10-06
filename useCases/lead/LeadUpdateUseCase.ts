@@ -55,11 +55,13 @@ export class LeadUpdateUseCase extends BaseUseCase<string, Lead, { uuid: string;
       }
     }
 
-    if (validatedInput.assigned_to) {
-      await UserModelFactory();
-      const assignee = await UserModel.findOne({ where: { uuid: validatedInput.assigned_to, deleted_at: null } });
-      if (!assignee) {
-        throw new NotFoundException("Assigned user not found.");
+    if (Object.prototype.hasOwnProperty.call(validatedInput, "assigned_to")) {
+      if (validatedInput.assigned_to) {
+        await UserModelFactory();
+        const assignee = await UserModel.findOne({ where: { uuid: validatedInput.assigned_to, deleted_at: null } });
+        if (!assignee) {
+          throw new NotFoundException("Assigned user not found.");
+        }
       }
     }
 

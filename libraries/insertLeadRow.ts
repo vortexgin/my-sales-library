@@ -1,11 +1,20 @@
 import { randomUUID } from "crypto";
-import LeadModelFactory, { LeadModel, type CreateLeadInput, type Lead } from "@/app/sales/models/LeadModel";
+import LeadModelFactory, {
+  LeadModel,
+  type CreateLeadInput,
+  type Lead,
+} from "@/app/sales/models/LeadModel";
 
 /**
  * Single-row insert shared by single create and bulk import: identical field
  * normalization (trim, lowercase email, null defaults, actor org id).
+ * The assignee label is resolved at read time via the eager-loaded user
+ * association — the write path stores only the `assigned_to` FK.
  */
-export async function insertLeadRow(input: CreateLeadInput, organizationId: string | null): Promise<Lead> {
+export async function insertLeadRow(
+  input: CreateLeadInput,
+  organizationId: string | null,
+): Promise<Lead> {
   await LeadModelFactory();
   const lead = await LeadModel.create({
     uuid: randomUUID(),

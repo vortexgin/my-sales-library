@@ -46,6 +46,8 @@ export default async function LeadDetailPage({
     notFound();
   }
 
+  const assigneeLabel = lead.assignee?.name ? lead.assignee.name : (lead.assigned_to ?? "—");
+
   const actor = session.user as Record<string, unknown> | null;
   const [metadataRows, fieldRows, activityRows] = await Promise.all([
     new LeadMetadataListUseCase().exec({ filter: { leads_id: uuid }, limit: 500 }),
@@ -88,7 +90,7 @@ export default async function LeadDetailPage({
             <Row label="Source" value={lead.source} />
             <Row label="Status" value={lead.status} />
             <Row label="Value" value={typeof lead.value === "number" ? String(lead.value) : "—"} />
-            <Row label="Assigned to" value={lead.assigned_to ?? "—"} />
+            <Row label="Assigned to" value={assigneeLabel} />
             <Row label="Notes" value={lead.notes ?? "—"} />
             <Row label="Created" value={lead.created_at} />
             <Row label="Updated" value={lead.updated_at} />

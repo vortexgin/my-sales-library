@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import Joi, { Schema } from "joi";
 import LeadModelFactory, { LeadModel, type CreateLeadInput, type Lead } from "@/app/sales/models/LeadModel";
-import { insertLeadRow } from "@/app/sales/useCases/lead/insertLeadRow";
+import { insertLeadRow } from "@/app/sales/libraries/insertLeadRow";
 import LeadMetadataModelFactory, { LeadMetadataModel } from "@/app/sales/models/LeadMetadataModel";
 import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel } from "@/app/sales/models/LeadMetadataFieldModel";
 import UserModelFactory, { UserModel } from "@/app/base/models/UserModel";

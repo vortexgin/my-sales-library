@@ -8,7 +8,7 @@ import {
   normalizeImportRow,
   toCreateLeadInput,
   type LeadImportRow,
-} from "@/app/sales/useCases/lead/leadImportRow";
+} from "@/app/sales/libraries/leadImportRow";
 
 export type ImportRowIssue = {
   index: number;
@@ -93,7 +93,8 @@ export async function classifyImportRows(rawRows: unknown[]): Promise<Classified
     });
   }
 
-  // Unknown assignees: one query for the whole batch.
+  // Unknown assignees: one query for the whole batch. Only membership is
+  // needed — the assignee label resolves at read time via the association.
   const assigneeIds = [...new Set(fresh.map(({ row }) => row.assigned_to).filter((id): id is string => typeof id === "string"))];
   let knownAssignees = new Set<string>();
   if (assigneeIds.length > 0) {

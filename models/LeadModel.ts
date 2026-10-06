@@ -20,6 +20,8 @@ export type Lead = {
   status: string;
   value: number | null;
   assigned_to: string | null;
+  /** Assignee label from the eager-loaded user association. Null when unassigned. */
+  assignee: { id: string; name: string; email: string } | null;
   organization_id: string | null;
   notes: string | null;
   created_at: string;
@@ -50,7 +52,7 @@ export type CreateLeadInput = {
 
 export type UpdateLeadInput = Partial<CreateLeadInput>;
 
-export type LeadModelAttributes = Partial<Omit<Lead, "created_at" | "updated_at" | "deleted_at">> & {
+export type LeadModelAttributes = Partial<Omit<Lead, "created_at" | "updated_at" | "deleted_at" | "assignee">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -75,6 +77,9 @@ export class LeadModel extends Model<LeadModelAttributes, LeadModelCreationAttri
   declare deleted_at: Date | null;
 
   static toApi(lead: any): Lead {
+    // Assignee comes from the eager-loaded `assignee` association
+    // (LeadGetUseCase include). Null when unassigned or not loaded.
+    const assignee = lead.assignee ?? null;
     return {
       uuid: lead.uuid,
       name: lead.name,
@@ -85,6 +90,9 @@ export class LeadModel extends Model<LeadModelAttributes, LeadModelCreationAttri
       status: lead.status,
       value: typeof lead.value === "number" ? lead.value : null,
       assigned_to: lead.assigned_to ?? null,
+      assignee: assignee
+        ? { id: assignee.uuid ?? assignee.id ?? "", name: assignee.name ?? "", email: assignee.email ?? "" }
+        : null,
       organization_id: lead.organization_id ?? null,
       notes: lead.notes ?? null,
       created_at: lead.created_at ? new Date(lead.created_at).toISOString() : new Date().toISOString(),
