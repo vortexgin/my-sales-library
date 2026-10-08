@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { connectDatabase } from "@/database/sequelize";
 import { actorFromRequest } from "@/libraries/Auth";
 import { withAuthorization } from "@/libraries/AuthorizedRoute";
-import { fail, getErrorStatus, ok, queryParam } from "@/libraries/Http";
+import { collectFilters, fail, getErrorStatus, ok, queryParam } from "@/libraries/Http";
 import { LeadStatusCreateUseCase } from "@/app/sales/useCases/leadStatus/LeadStatusCreateUseCase";
 import { LeadStatusListUseCase } from "@/app/sales/useCases/leadStatus/LeadStatusListUseCase";
 import type { CreateLeadStatusInput } from "@/app/sales/models/LeadStatusModel";
@@ -15,11 +15,7 @@ async function handleGet(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const rows = await new LeadStatusListUseCase().exec(
       {
-        filter: {
-          q: queryParam(params, "filter[q]"),
-          name: queryParam(params, "filter[name]"),
-          status: queryParam(params, "filter[status]"),
-        },
+        filter: collectFilters(params),
         sortProperty: queryParam(params, "sortProperty"),
         sortDirection: queryParam(params, "sortDirection"),
         offset: queryParam(params, "offset"),

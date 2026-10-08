@@ -10,6 +10,8 @@ import DuplicateEntityException from "@/exceptions/DuplicateEntityException";
 const createLeadStatusSchema = Joi.object({
   name: Joi.string().trim().min(2).max(160).required(),
   description: Joi.string().trim().min(2).required(),
+  weight: Joi.number().integer().min(0).default(0),
+  is_final: Joi.boolean().default(false),
   status: Joi.string().valid("active", "inactive", "deleted").optional(),
 });
 
@@ -43,6 +45,8 @@ export class LeadStatusCreateUseCase extends BaseUseCase<CreateLeadStatusInput, 
         organization_id: organizationId ?? null,
         name: input.name?.trim(),
         description: input.description?.trim(),
+        weight: input.weight ?? 0,
+        is_final: input.is_final ?? false,
         status: input.status ?? "active",
         deleted_at: null,
       });

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { connectDatabase } from "@/database/sequelize";
 import { actorFromRequest } from "@/libraries/Auth";
 import { withAuthorization } from "@/libraries/AuthorizedRoute";
-import { fail, getErrorStatus, ok, queryParam } from "@/libraries/Http";
+import { collectFilters, fail, getErrorStatus, ok, queryParam } from "@/libraries/Http";
 import { LeadMetadataCreateUseCase } from "@/app/sales/useCases/leadMetadata/LeadMetadataCreateUseCase";
 import { LeadMetadataListUseCase } from "@/app/sales/useCases/leadMetadata/LeadMetadataListUseCase";
 import type { CreateLeadMetadataInput } from "@/app/sales/models/LeadMetadataModel";
@@ -13,14 +13,14 @@ async function handleGet(request: NextRequest) {
   try {
     await connectDatabase();
     const params = request.nextUrl.searchParams;
+    const filter = collectFilters(params);
+    // Legacy alias: `filter[name]` refers to the metadata field id.
+    if (filter.name !== undefined && filter.lead_metadata_field_id === undefined) {
+      filter.lead_metadata_field_id = filter.name;
+      delete filter.name;
+    }
     const rows = await new LeadMetadataListUseCase().exec({
-      filter: {
-        q: queryParam(params, "filter[q]"),
-        leads_id: queryParam(params, "filter[leads_id]"),
-        lead_metadata_field_id:
-          queryParam(params, "filter[lead_metadata_field_id]") ?? queryParam(params, "filter[name]"),
-        status: queryParam(params, "filter[status]"),
-      },
+      filter,
       sortProperty: queryParam(params, "sortProperty"),
       sortDirection: queryParam(params, "sortDirection"),
       offset: queryParam(params, "offset"),

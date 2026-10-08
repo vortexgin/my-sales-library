@@ -5,6 +5,7 @@ import { connectDatabase } from "@/database/sequelize";
 import { AuthComponent } from "@/components/AuthComponent";
 import { AccessDenied } from "@/components/AccessDenied";
 import { DeleteLeadButton } from "@/app/sales/components/lead/DeleteLeadButton";
+import { LeadConvertButton } from "@/app/sales/components/lead/LeadConvertButton";
 import { LeadDetailClient } from "@/app/sales/components/lead/LeadDetailClient";
 import { LEAD_LIST_PATH } from "@/app/sales/views/leads/paths";
 import { requireSession } from "@/libraries/Auth";
@@ -121,6 +122,13 @@ export default async function LeadDetailPage({
               allowedPermissions={["sales:lead:view:delete"]}
             >
               <DeleteLeadButton uuid={lead.uuid} label={lead.name} redirectTo={LEAD_LIST_PATH} />
+            </AuthComponent>
+            <AuthComponent
+              user={session.user}
+              permissions={session.permissions}
+              allowedPermissions={["sales:customer:create:create"]}
+            >
+              <LeadConvertButton leadUuid={lead.uuid} label={lead.name} />
             </AuthComponent>
           </div>
         </div>

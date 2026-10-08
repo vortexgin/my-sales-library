@@ -17,7 +17,7 @@ export function LeadStatusForm({
 }: {
   mode: "create" | "edit";
   uuid?: string;
-  initial?: Pick<LeadStatus, "name" | "description" | "status">;
+  initial?: Pick<LeadStatus, "name" | "description" | "weight" | "is_final" | "status">;
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -30,11 +30,19 @@ export function LeadStatusForm({
 
     try {
       const formData = new FormData(event.currentTarget);
+      const weightRaw = String(formData.get("weight") ?? "").trim();
       const payload: Record<string, unknown> = {
         name: String(formData.get("name") ?? ""),
         description: String(formData.get("description") ?? ""),
+        weight: weightRaw === "" ? 0 : Number(weightRaw),
+        is_final: String(formData.get("is_final") ?? "") === "1",
         status: String(formData.get("status") ?? "active"),
       };
+      if (typeof payload.weight === "number" && Number.isNaN(payload.weight)) {
+        setError("Weight must be a number.");
+        setIsPending(false);
+        return;
+      }
 
       const envelope =
         mode === "create"
@@ -94,6 +102,28 @@ export function LeadStatusForm({
               { value: "inactive", label: "inactive" },
             ]}
           />
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <TextField
+              label="Weight"
+              name="weight"
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={initial?.weight ?? 0}
+              hint="Column order, lowest first."
+            />
+            <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="checkbox"
+                name="is_final"
+                value="1"
+                defaultChecked={initial?.is_final ?? false}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span className="text-sm font-medium text-slate-700">Final stage (converted / lost)</span>
+            </label>
+          </div>
 
           {error ? (
             <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

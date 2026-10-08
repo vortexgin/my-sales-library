@@ -9,6 +9,8 @@ import NotFoundException from "@/exceptions/NotFoundException";
 const updateLeadStatusSchema = Joi.object({
   name: Joi.string().trim().min(2).max(160).optional(),
   description: Joi.string().trim().min(2).optional(),
+  weight: Joi.number().integer().min(0).optional(),
+  is_final: Joi.boolean().optional(),
   status: Joi.string().valid("active", "inactive", "deleted").optional(),
 }).min(1);
 
@@ -56,6 +58,14 @@ export class LeadStatusUpdateUseCase extends BaseUseCase<string, LeadStatus, { u
 
     if (typeof input.description === "string" && input.description.trim()) {
       nextData.description = input.description.trim();
+    }
+
+    if (typeof input.weight === "number") {
+      nextData.weight = input.weight;
+    }
+
+    if (typeof input.is_final === "boolean") {
+      nextData.is_final = input.is_final;
     }
 
     if (input.status) {

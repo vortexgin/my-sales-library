@@ -49,6 +49,8 @@ export default async function LeadStatusEditPage({
           initial={{
             name: leadStatus.name,
             description: leadStatus.description,
+            weight: leadStatus.weight,
+            is_final: leadStatus.is_final,
             status: leadStatus.status,
           }}
         />

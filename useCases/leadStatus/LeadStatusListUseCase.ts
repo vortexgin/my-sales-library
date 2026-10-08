@@ -34,6 +34,7 @@ export type ListLeadStatusesQuery = {
 const SORTABLE_COLUMNS: Record<string, string> = {
   uuid: "uuid",
   name: "name",
+  weight: "weight",
   status: "status",
   created_at: "created_at",
   updated_at: "updated_at",

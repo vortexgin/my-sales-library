@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import type { Lead } from "@/app/sales/models/LeadModel";
 import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
 import type { User } from "@/app/base/models/UserModel";
@@ -33,7 +34,7 @@ const STALE_OPTIONS = [
 ];
 
 async function fetchStatuses(): Promise<LeadStatus[]> {
-  const params = new URLSearchParams({ limit: "500", sortProperty: "created_at", sortDirection: "asc" });
+  const params = new URLSearchParams({ limit: "500", sortProperty: "weight", sortDirection: "asc" });
   const envelope = await getEncrypted<LeadStatus[]>(`${STATUS_API}?${params.toString()}`);
   if (!envelope.success) {
     throw new Error(envelope.message || "Failed to fetch lead statuses.");
@@ -94,6 +95,7 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
   const [mountedAt] = useState(() => Date.now());
   const [dragUuid, setDragUuid] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [finalPopup, setFinalPopup] = useState<{ lead: Lead; finalName: string } | null>(null);
 
   const canUpdate = hasPermission(session.user, session.permissions, ["sales:lead:view:update"]);
   const canCreate = hasPermission(session.user, session.permissions, ["sales:lead:create:create"]);
@@ -205,6 +207,15 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
           current.map((lead) => (lead.uuid === leadUuid ? (envelope.data as Lead) : lead)),
         );
       }
+      // Dropped onto a final stage: offer next steps. The move itself
+      // already persisted; Do nothing simply closes the popup.
+      const target = statuses.find((status) => status.name === targetStatus);
+      if (target?.is_final) {
+        const moved = (envelope.data as Lead | undefined) ?? previous.find((lead) => lead.uuid === leadUuid);
+        if (moved) {
+          setFinalPopup({ lead: { ...moved, status: targetStatus }, finalName: targetStatus });
+        }
+      }
     } catch (err) {
       setLeads(previous);
       setMoveError(err instanceof Error ? err.message : "Failed to move lead.");
@@ -212,12 +223,16 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
   }
 
   const columns = useMemo(() => {
-    const grouped = statuses.map((status) => {
+    const ordered = [...statuses].sort(
+      (a, b) => (a.weight ?? 0) - (b.weight ?? 0) || a.created_at.localeCompare(b.created_at),
+    );
+    const grouped = ordered.map((status) => {
       const rows = leads.filter((lead) => lead.status === status.name);
       return {
         key: status.name,
         title: status.name,
         description: status.description,
+        isFinal: status.is_final,
         leads: rows,
         total: rows.reduce((sum, lead) => sum + (typeof lead.value === "number" ? lead.value : 0), 0),
       };
@@ -228,6 +243,7 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
         key: "__other__",
         title: "Other",
         description: "Status not in master data.",
+        isFinal: false,
         leads: unmapped,
         total: unmapped.reduce((sum, lead) => sum + (typeof lead.value === "number" ? lead.value : 0), 0),
       });
@@ -479,13 +495,24 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                 }
                 setDragUuid(null);
               } : undefined}
-              className={`flex w-72 shrink-0 flex-col rounded-2xl border bg-slate-50/80 p-3 transition ${
-                dropTarget === column.key ? "border-blue-400 ring-4 ring-blue-100" : "border-slate-200"
+              className={`flex w-72 shrink-0 flex-col rounded-2xl border p-3 transition ${
+                dropTarget === column.key
+                  ? "border-blue-400 bg-slate-50/80 ring-4 ring-blue-100"
+                  : "isFinal" in column && column.isFinal
+                    ? "border-emerald-300 bg-emerald-50/60 ring-1 ring-inset ring-emerald-200"
+                    : "border-slate-200 bg-slate-50/80"
               }`}
             >
               <header className="px-1 pb-3">
                 <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-slate-900">{column.title}</h2>
+                  <h2 className="text-sm font-semibold text-slate-900">
+                    {column.title}
+                    {"isFinal" in column && column.isFinal ? (
+                      <span className="ml-2 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        final
+                      </span>
+                    ) : null}
+                  </h2>
                   <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
                     {column.leads.length} · {column.total}
                   </span>
@@ -555,6 +582,38 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
       {!canUpdate && !loading ? (
         <p className="mt-4 text-xs text-slate-400">You have read-only access: dragging between statuses is disabled.</p>
       ) : null}
+      {finalPopup && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Lead reached final stage">
+              <div className="absolute inset-0 bg-slate-950/50" onClick={() => setFinalPopup(null)} aria-hidden />
+              <div className="relative w-full max-w-md rounded-[24px] border border-slate-200 bg-white p-6 shadow-2xl">
+                <h2 className="text-lg font-semibold text-slate-900">Final stage.</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {finalPopup.lead.name} is now {finalPopup.finalName}. What next?
+                </p>
+                <div className="mt-4 space-y-2">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                    Create running invoice — unavailable: invoice creation lives in the sass module.
+                  </div>
+                  <Link
+                    href="/sales/views/purchase-requests/create"
+                    className="block rounded-xl bg-slate-950 px-4 py-3 text-center text-sm font-medium text-white transition hover:bg-slate-800"
+                  >
+                    Create purchase request
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => setFinalPopup(null)}
+                    className="block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Do nothing
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

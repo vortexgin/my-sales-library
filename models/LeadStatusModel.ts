@@ -8,6 +8,8 @@ export type LeadStatus = {
   organization_id: string | null;
   name: string;
   description: string;
+  weight: number;
+  is_final: boolean;
   status: LeadStatusState;
   created_at: string;
   updated_at: string;
@@ -17,6 +19,8 @@ export type LeadStatus = {
 export type CreateLeadStatusInput = {
   name: string;
   description: string;
+  weight?: number;
+  is_final?: boolean;
   status?: LeadStatusState;
 };
 
@@ -35,6 +39,8 @@ export class LeadStatusModel extends Model<LeadStatusModelAttributes, LeadStatus
   declare organization_id: string | null;
   declare name: string;
   declare description: string;
+  declare weight: number;
+  declare is_final: boolean;
   declare status: LeadStatusState;
   declare created_at: Date;
   declare updated_at: Date;
@@ -46,11 +52,38 @@ export class LeadStatusModel extends Model<LeadStatusModelAttributes, LeadStatus
       organization_id: leadStatus.organization_id ?? null,
       name: leadStatus.name,
       description: leadStatus.description,
+      weight: typeof leadStatus.weight === "number" ? leadStatus.weight : 0,
+      is_final: Boolean(leadStatus.is_final),
       status: leadStatus.status,
       created_at: leadStatus.created_at ? new Date(leadStatus.created_at).toISOString() : new Date().toISOString(),
       updated_at: leadStatus.updated_at ? new Date(leadStatus.updated_at).toISOString() : new Date().toISOString(),
       deleted_at: leadStatus.deleted_at ? new Date(leadStatus.deleted_at).toISOString() : null,
     };
+  }
+
+  /**
+   * Start of the pipeline: lowest weight, oldest first, among active rows
+   * for the organization. Falls back to "new" when none is configured.
+   */
+  static async resolveStartName(organizationId: string | null): Promise<string> {
+    await getLeadStatusModel();
+    const row = await LeadStatusModel.findOne({
+      where: { organization_id: organizationId, status: "active", deleted_at: null },
+      order: [["weight", "ASC"], ["created_at", "ASC"]],
+    });
+    return row?.name ?? "new";
+  }
+
+  /**
+   * First final stage by weight for the organization, if one is configured.
+   */
+  static async resolveFinalName(organizationId: string | null): Promise<string | null> {
+    await getLeadStatusModel();
+    const row = await LeadStatusModel.findOne({
+      where: { organization_id: organizationId, is_final: true, status: "active", deleted_at: null },
+      order: [["weight", "ASC"], ["created_at", "ASC"]],
+    });
+    return row?.name ?? null;
   }
 }
 
@@ -93,6 +126,16 @@ async function initLeadStatusModel(): Promise<typeof LeadStatusModel> {
         description: {
           type: DataTypes.TEXT,
           allowNull: false,
+        },
+        weight: {
+          type: DataTypes.INTEGER,
+          allowNull: false,
+          defaultValue: 0,
+        },
+        is_final: {
+          type: DataTypes.BOOLEAN,
+          allowNull: false,
+          defaultValue: false,
         },
         status: {
           type: DataTypes.ENUM("active", "inactive", "deleted"),

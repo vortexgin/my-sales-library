@@ -4,6 +4,7 @@ import LeadModelFactory, { LeadModel, type CreateLeadInput, type Lead } from "@/
 import { insertLeadRow } from "@/app/sales/libraries/insertLeadRow";
 import LeadMetadataModelFactory, { LeadMetadataModel } from "@/app/sales/models/LeadMetadataModel";
 import LeadMetadataFieldModelFactory, { LeadMetadataFieldModel } from "@/app/sales/models/LeadMetadataFieldModel";
+import LeadStatusModelFactory, { LeadStatusModel } from "@/app/sales/models/LeadStatusModel";
 import UserModelFactory, { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
@@ -44,6 +45,12 @@ export class LeadCreateUseCase extends BaseUseCase<CreateLeadInput, Lead, LeadCr
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     const organizationId =
       typeof actorUuid === "string" ? ((await UserModel.resolveOrganization(actorUuid))?.uuid ?? null) : null;
+
+    // No status given: start at the lowest-weight active stage for the org.
+    if (!validated.status?.trim()) {
+      await LeadStatusModelFactory();
+      validated.status = await LeadStatusModel.resolveStartName(organizationId);
+    }
 
     return { input: validated, actor: actor ?? null, organizationId, ...billing };
   }
