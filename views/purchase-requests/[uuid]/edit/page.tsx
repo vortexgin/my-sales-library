@@ -61,6 +61,12 @@ export default async function PurchaseRequestEditPage({
               discount_pct: item.discount_pct,
               notes: item.notes,
             })),
+            metadata: (request.metadata ?? []).map((item) => ({
+              uuid: item.uuid,
+              sales_doc_metadata_field_id: item.sales_doc_metadata_field_id,
+              field_name: item.field_name,
+              value: item.value,
+            })),
           }}
         />
       </main>

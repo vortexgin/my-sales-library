@@ -2,6 +2,8 @@ import Joi from "joi";
 import DeliveryOrderModelFactory, { DeliveryOrderModel, type DeliveryOrder } from "@/app/sales/models/DeliveryOrderModel";
 import DeliveryOrderItemModelFactory, { DeliveryOrderItemModel } from "@/app/sales/models/DeliveryOrderItemModel";
 import SalesOrderModelFactory, { SalesOrderModel } from "@/app/sales/models/SalesOrderModel";
+import DeliveryOrderMetadataModelFactory, { DeliveryOrderMetadataModel } from "@/app/sales/models/DeliveryOrderMetadataModel";
+import DocMetadataFieldModelFactory, { DocMetadataFieldModel } from "@/app/sales/models/DocMetadataFieldModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import NotFoundException from "@/exceptions/NotFoundException";
 
@@ -110,6 +112,23 @@ export class DeliveryOrderGetUseCase extends BaseUseCase<string, DeliveryOrder |
     });
     const { productByUuid, variantByUuid } = await resolveItemLabels(items);
 
+    await DeliveryOrderMetadataModelFactory();
+    const metadataRows = await DeliveryOrderMetadataModel.findAll({
+      where: { sales_delivery_order_id: uuid, deleted_at: null },
+      order: [["created_at", "ASC"]],
+    });
+    let fieldNames = new Map<string, string>();
+    try {
+      await DocMetadataFieldModelFactory();
+      const fieldIds = [...new Set(metadataRows.map((metadata) => metadata.sales_doc_metadata_field_id))];
+      const fields = fieldIds.length > 0
+        ? await DocMetadataFieldModel.findAll({ where: { uuid: fieldIds } })
+        : [];
+      fieldNames = new Map(fields.map((field) => [field.uuid, field.name]));
+    } catch {
+      // Metadata remains usable with field UUID fallback if field lookup fails.
+    }
+
     return {
       ...DeliveryOrderModel.toApi(row.toJSON()),
       items: items.map((item) => {
@@ -123,6 +142,10 @@ export class DeliveryOrderGetUseCase extends BaseUseCase<string, DeliveryOrder |
           variant_name: variant?.name ?? null,
         });
       }),
+      metadata: metadataRows.map((metadata) => ({
+        ...DeliveryOrderMetadataModel.toApi(metadata.toJSON()),
+        field_name: fieldNames.get(metadata.sales_doc_metadata_field_id),
+      })),
     };
   }
 }

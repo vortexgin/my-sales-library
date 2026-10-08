@@ -1,14 +1,24 @@
 import Joi from "joi";
 import DeliveryOrderModelFactory, { DeliveryOrderModel, type DeliveryOrder, type UpdateDeliveryOrderInput } from "@/app/sales/models/DeliveryOrderModel";
 import DeliveryOrderItemModelFactory, { DeliveryOrderItemModel } from "@/app/sales/models/DeliveryOrderItemModel";
+import { syncDeliveryOrderMetadata, type DeliveryOrderMetadataNestedItem } from "@/app/sales/libraries/deliveryOrderMetadataSync";
+import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import BadParameterException from "@/exceptions/BadParameterException";
 import NotFoundException from "@/exceptions/NotFoundException";
 
+const deliveryOrderMetadataNestedSchema = Joi.object({
+  uuid: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  sales_doc_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+}).or("uuid", "sales_doc_metadata_field_id", "field_name");
+
 const updateDeliveryOrderSchema = Joi.object({
   notes: Joi.string().trim().allow("", null).optional(),
   status: Joi.string().valid("draft", "packed", "delivered", "cancelled").optional(),
+  metadata: Joi.array().items(deliveryOrderMetadataNestedSchema).max(100).optional(),
 }).unknown(false).min(1);
 
 export class DeliveryOrderUpdateUseCase extends BaseUseCase<string, DeliveryOrder, { uuid: string; input: UpdateDeliveryOrderInput; actor: ActivityActor }> {
@@ -23,6 +33,13 @@ export class DeliveryOrderUpdateUseCase extends BaseUseCase<string, DeliveryOrde
     this.deliveryOrderData = await DeliveryOrderModel.findOne({ where: { uuid, deleted_at: null } });
     if (!this.deliveryOrderData) {
       throw new NotFoundException("Delivery order not found")
+    }
+    const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
+    const organizationId = typeof actorUuid === "string"
+      ? ((await UserModel.resolveOrganization(actorUuid))?.uuid ?? null)
+      : null;
+    if ((this.deliveryOrderData.organization_id ?? null) !== organizationId) {
+      throw new NotFoundException("Delivery order not found");
     }
     this.beforeData = DeliveryOrderModel.toApi(this.deliveryOrderData?.toJSON());
 
@@ -61,6 +78,18 @@ export class DeliveryOrderUpdateUseCase extends BaseUseCase<string, DeliveryOrde
     }
 
     await this.deliveryOrderData?.update(nextData);
+
+    // Metadata sync is independent of the fixed items: notes/status rules
+    // above are untouched, omitted metadata rows soft-delete on replacement.
+    if (Object.prototype.hasOwnProperty.call(input, "metadata")) {
+      const api = DeliveryOrderModel.toApi(this.deliveryOrderData?.toJSON());
+      await syncDeliveryOrderMetadata(
+        context.uuid,
+        input.metadata as DeliveryOrderMetadataNestedItem[] | undefined,
+        api.organization_id,
+        context.actor,
+      );
+    }
 
     await DeliveryOrderItemModelFactory();
     const items = await DeliveryOrderItemModel.findAll({

@@ -2,6 +2,8 @@ import Joi from "joi";
 import PurchaseRequestModelFactory, { PurchaseRequestModel, type PurchaseRequest } from "@/app/sales/models/PurchaseRequestModel";
 import PurchaseRequestItemModelFactory, { PurchaseRequestItemModel } from "@/app/sales/models/PurchaseRequestItemModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
+import PurchaseRequestMetadataModelFactory, { PurchaseRequestMetadataModel } from "@/app/sales/models/PurchaseRequestMetadataModel";
+import DocMetadataFieldModelFactory, { DocMetadataFieldModel } from "@/app/sales/models/DocMetadataFieldModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import NotFoundException from "@/exceptions/NotFoundException";
 
@@ -110,6 +112,23 @@ export class PurchaseRequestGetUseCase extends BaseUseCase<string, PurchaseReque
     });
     const { productByUuid, variantByUuid } = await resolveItemLabels(items);
 
+    await PurchaseRequestMetadataModelFactory();
+    const metadataRows = await PurchaseRequestMetadataModel.findAll({
+      where: { purchase_request_id: uuid, deleted_at: null },
+      order: [["created_at", "ASC"]],
+    });
+    let fieldNames = new Map<string, string>();
+    try {
+      await DocMetadataFieldModelFactory();
+      const fieldIds = [...new Set(metadataRows.map((metadata) => metadata.sales_doc_metadata_field_id))];
+      const fields = fieldIds.length > 0
+        ? await DocMetadataFieldModel.findAll({ where: { uuid: fieldIds } })
+        : [];
+      fieldNames = new Map(fields.map((field) => [field.uuid, field.name]));
+    } catch {
+      // Metadata remains usable with field UUID fallback if field lookup fails.
+    }
+
     return {
       ...PurchaseRequestModel.toApi(row.toJSON()),
       items: items.map((item) => {
@@ -123,6 +142,10 @@ export class PurchaseRequestGetUseCase extends BaseUseCase<string, PurchaseReque
           variant_name: variant?.name ?? null,
         });
       }),
+      metadata: metadataRows.map((metadata) => ({
+        ...PurchaseRequestMetadataModel.toApi(metadata.toJSON()),
+        field_name: fieldNames.get(metadata.sales_doc_metadata_field_id),
+      })),
     };
   }
 }

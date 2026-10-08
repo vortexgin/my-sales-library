@@ -4,6 +4,7 @@ import PurchaseRequestModelFactory, { PurchaseRequestModel, type CreatePurchaseR
 import PurchaseRequestItemModelFactory, { PurchaseRequestItemModel } from "@/app/sales/models/PurchaseRequestItemModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
+import { syncPurchaseRequestMetadata, type PurchaseRequestMetadataNestedItem } from "@/app/sales/libraries/purchaseRequestMetadataSync";
 import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
@@ -20,6 +21,13 @@ const purchaseRequestItemSchema = Joi.object({
   notes: Joi.string().trim().allow("", null).optional(),
 });
 
+const purchaseRequestMetadataNestedSchema = Joi.object({
+  uuid: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  sales_doc_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+}).or("uuid", "sales_doc_metadata_field_id", "field_name");
+
 const createPurchaseRequestSchema = Joi.object({
   customer_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   warehouse_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
@@ -28,6 +36,7 @@ const createPurchaseRequestSchema = Joi.object({
   // New requests always start as draft (transitions go through update).
   status: Joi.string().valid("draft").optional(),
   items: Joi.array().items(purchaseRequestItemSchema).min(1).max(200).required(),
+  metadata: Joi.array().items(purchaseRequestMetadataNestedSchema).max(100).optional(),
 }).unknown(false);
 
 async function assertWarehouseInScope(warehouseId: string, organizationId: string | null): Promise<void> {
@@ -80,7 +89,7 @@ export class PurchaseRequestCreateUseCase extends BaseUseCase<CreatePurchaseRequ
   }
 
   protected async execute(context: { input: CreatePurchaseRequestInput; actor: ActivityActor; organizationId: string | null }): Promise<PurchaseRequest & { items: unknown[] }> {
-    const { input, organizationId } = context;
+    const { input, organizationId, actor } = context;
     await PurchaseRequestModelFactory();
     await PurchaseRequestItemModelFactory();
 
@@ -121,6 +130,13 @@ export class PurchaseRequestCreateUseCase extends BaseUseCase<CreatePurchaseRequ
       });
       items.push(PurchaseRequestItemModel.toApi(row.toJSON()));
     }
+
+    await syncPurchaseRequestMetadata(
+      header.uuid,
+      input.metadata as PurchaseRequestMetadataNestedItem[] | undefined,
+      organizationId,
+      actor,
+    );
 
     return { ...PurchaseRequestModel.toApi(header.toJSON()), items };
   }

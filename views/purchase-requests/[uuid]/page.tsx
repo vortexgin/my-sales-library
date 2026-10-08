@@ -50,6 +50,7 @@ export default async function PurchaseRequestDetailPage({
     ? `${request.warehouse.name} (${request.warehouse.code})`
     : (request.warehouse_id ?? "—");
   const items = request.items ?? [];
+  const metadataRows = request.metadata ?? [];
 
   // A PR with a sales order (SO stores purchase_request_id) is already
   // converted: hide Create/Delete and link to the order instead.
@@ -133,6 +134,21 @@ export default async function PurchaseRequestDetailPage({
                   </table>
                 </div>
               </>
+            ) : null}
+
+            {metadataRows.length > 0 ? (
+              <section className="mt-6">
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Metadata</p>
+                <dl className="mt-2 rounded-xl border border-slate-200 px-4">
+                  {metadataRows.map((item) => (
+                    <Row
+                      key={item.uuid}
+                      label={item.field_name ?? item.sales_doc_metadata_field_id}
+                      value={item.value}
+                    />
+                  ))}
+                </dl>
+              </section>
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">

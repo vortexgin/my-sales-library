@@ -1,15 +1,24 @@
 import Joi from "joi";
 import PurchaseRequestModelFactory, { PurchaseRequestModel, type PurchaseRequest } from "@/app/sales/models/PurchaseRequestModel";
+import { syncPurchaseRequestMetadata, type PurchaseRequestMetadataNestedItem } from "@/app/sales/libraries/purchaseRequestMetadataSync";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import BadParameterException from "@/exceptions/BadParameterException";
 import NotFoundException from "@/exceptions/NotFoundException";
+
+const purchaseRequestMetadataNestedSchema = Joi.object({
+  uuid: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  sales_doc_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+}).or("uuid", "sales_doc_metadata_field_id", "field_name");
 
 const updatePurchaseRequestSchema = Joi.object({
   warehouse_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   discount_pct: Joi.number().min(0).max(100).optional(),
   notes: Joi.string().trim().allow("", null).optional(),
   status: Joi.string().valid("draft", "submitted", "approved", "rejected", "closed").optional(),
+  metadata: Joi.array().items(purchaseRequestMetadataNestedSchema).max(100).optional(),
 }).unknown(false).min(1);
 
 /**
@@ -53,7 +62,7 @@ export class PurchaseRequestUpdateUseCase extends BaseUseCase<string, PurchaseRe
   }
 
   protected async execute(context: { uuid: string; input: Record<string, unknown>; actor: ActivityActor }): Promise<PurchaseRequest> {
-    const { input } = context;
+    const { uuid, input, actor } = context;
     const nextData: Record<string, unknown> = {
       updated_at: new Date(),
     };
@@ -77,6 +86,16 @@ export class PurchaseRequestUpdateUseCase extends BaseUseCase<string, PurchaseRe
     }
 
     await this.purchaseRequestData?.update(nextData);
+
+    if (Object.prototype.hasOwnProperty.call(input, "metadata")) {
+      const api = PurchaseRequestModel.toApi(this.purchaseRequestData?.toJSON());
+      await syncPurchaseRequestMetadata(
+        uuid,
+        input.metadata as PurchaseRequestMetadataNestedItem[] | undefined,
+        api.organization_id,
+        actor,
+      );
+    }
 
     return PurchaseRequestModel.toApi(this.purchaseRequestData?.toJSON());
   }

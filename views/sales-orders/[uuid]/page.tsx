@@ -54,6 +54,7 @@ export default async function SalesOrderDetailPage({
     ? `Request ${order.purchase_request.id.slice(0, 8)} · ${order.purchase_request.status}`
     : (order.purchase_request_id ?? "—");
   const items = order.items ?? [];
+  const metadataRows = order.metadata ?? [];
 
   return (
     <AuthComponent
@@ -123,6 +124,21 @@ export default async function SalesOrderDetailPage({
                   </table>
                 </div>
               </>
+            ) : null}
+
+            {metadataRows.length > 0 ? (
+              <section className="mt-6">
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Metadata</p>
+                <dl className="mt-2 rounded-xl border border-slate-200 px-4">
+                  {metadataRows.map((item) => (
+                    <Row
+                      key={item.uuid}
+                      label={item.field_name ?? item.sales_doc_metadata_field_id}
+                      value={item.value}
+                    />
+                  ))}
+                </dl>
+              </section>
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">

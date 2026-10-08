@@ -1,5 +1,6 @@
 import { DataTypes, Model } from "sequelize";
 import { getSequelizeInstance } from "@/database/sequelize";
+import type { DeliveryOrderMetadata } from "@/app/sales/models/DeliveryOrderMetadataModel";
 
 export type DeliveryOrderStatus = "draft" | "packed" | "shipped" | "delivered" | "cancelled";
 export type DeliveryOrderFulfillment = "system" | "paper";
@@ -56,10 +57,18 @@ export type DeliveryOrder = {
   updated_at: string;
   deleted_at: string | null;
   items?: DeliveryOrderItem[];
+  metadata?: Array<DeliveryOrderMetadata & { field_name?: string }>;
   /** Relation labels come from eager-loaded associations, not stored snapshots. Null when absent. */
   sales_order: DeliveryOrderSalesOrder | null;
   warehouse: DeliveryOrderWarehouse | null;
   customer: DeliveryOrderCustomer | null;
+};
+
+export type DeliveryOrderMetadataNestedInput = {
+  uuid?: string;
+  sales_doc_metadata_field_id?: string;
+  field_name?: string;
+  value: string;
 };
 
 export type CreateDeliveryOrderInput = {
@@ -68,14 +77,16 @@ export type CreateDeliveryOrderInput = {
   notes?: string | null;
   status?: DeliveryOrderStatus;
   items: DeliveryOrderItemInput[];
+  metadata?: DeliveryOrderMetadataNestedInput[];
 };
 
 export type UpdateDeliveryOrderInput = {
   notes?: string | null;
   status?: DeliveryOrderStatus;
+  metadata?: DeliveryOrderMetadataNestedInput[];
 };
 
-export type DeliveryOrderModelAttributes = Partial<Omit<DeliveryOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "sales_order" | "warehouse" | "customer">> & {
+export type DeliveryOrderModelAttributes = Partial<Omit<DeliveryOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "metadata" | "sales_order" | "warehouse" | "customer">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;

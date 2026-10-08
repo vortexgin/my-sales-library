@@ -62,6 +62,12 @@ export default async function SalesOrderEditPage({
               discount_pct: item.discount_pct,
               notes: item.notes,
             })),
+            metadata: (order.metadata ?? []).map((item) => ({
+              uuid: item.uuid,
+              sales_doc_metadata_field_id: item.sales_doc_metadata_field_id,
+              field_name: item.field_name,
+              value: item.value,
+            })),
           }}
         />
       </main>

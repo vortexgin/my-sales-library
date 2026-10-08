@@ -6,6 +6,7 @@ import DeliveryOrderItemModelFactory, { DeliveryOrderItemModel } from "@/app/sal
 import SalesOrderModelFactory, { SalesOrderModel } from "@/app/sales/models/SalesOrderModel";
 import SalesOrderItemModelFactory, { SalesOrderItemModel } from "@/app/sales/models/SalesOrderItemModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
+import { syncDeliveryOrderMetadata, type DeliveryOrderMetadataNestedItem } from "@/app/sales/libraries/deliveryOrderMetadataSync";
 import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
@@ -20,12 +21,20 @@ const deliveryOrderItemSchema = Joi.object({
   qty: Joi.number().integer().min(1).required(),
 });
 
+const deliveryOrderMetadataNestedSchema = Joi.object({
+  uuid: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  sales_doc_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+}).or("uuid", "sales_doc_metadata_field_id", "field_name");
+
 const createDeliveryOrderSchema = Joi.object({
   sales_order_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   warehouse_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   notes: Joi.string().trim().allow("", null).optional(),
   status: Joi.string().valid("draft", "packed", "cancelled").optional(),
   items: Joi.array().items(deliveryOrderItemSchema).min(1).max(200).required(),
+  metadata: Joi.array().items(deliveryOrderMetadataNestedSchema).max(100).optional(),
 }).unknown(false);
 
 async function assertWarehouseInScope(warehouseId: string, organizationId: string | null): Promise<void> {
@@ -62,8 +71,8 @@ export class DeliveryOrderCreateUseCase extends BaseUseCase<CreateDeliveryOrderI
       throw new NotFoundException("Sales order not found.");
     }
     const orderOrg = order.organization_id ?? null;
-    if (organizationId && orderOrg !== null && orderOrg !== organizationId) {
-      throw new ForbiddenException("Sales order belongs to another organization.");
+    if (orderOrg !== organizationId) {
+      throw new NotFoundException("Sales order not found.");
     }
 
     await assertWarehouseInScope(validated.warehouse_id, organizationId);
@@ -126,7 +135,7 @@ export class DeliveryOrderCreateUseCase extends BaseUseCase<CreateDeliveryOrderI
   }
 
   protected async execute(context: { input: CreateDeliveryOrderInput; actor: ActivityActor; organizationId: string | null }): Promise<DeliveryOrder & { items: unknown[] }> {
-    const { input, organizationId } = context;
+    const { input, organizationId, actor } = context;
     await DeliveryOrderModelFactory();
     await DeliveryOrderItemModelFactory();
 
@@ -155,6 +164,13 @@ export class DeliveryOrderCreateUseCase extends BaseUseCase<CreateDeliveryOrderI
       });
       items.push(DeliveryOrderItemModel.toApi(row.toJSON()));
     }
+
+    await syncDeliveryOrderMetadata(
+      header.uuid,
+      input.metadata as DeliveryOrderMetadataNestedItem[] | undefined,
+      organizationId,
+      actor,
+    );
 
     return { ...DeliveryOrderModel.toApi(header.toJSON()), items };
   }

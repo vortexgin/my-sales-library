@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { SALES_ORDER_LIST_PATH } from "@/app/sales/views/sales-orders/paths";
 import type { SalesOrder } from "@/app/sales/models/SalesOrderModel";
+import type { SalesOrderMetadata } from "@/app/sales/models/SalesOrderMetadataModel";
+import type { DocMetadataField } from "@/app/sales/models/DocMetadataFieldModel";
 import { formatMoney } from "@/libraries/Currency";
 import type { PurchaseRequest } from "@/app/sales/models/PurchaseRequestModel";
 import type { Customer } from "@/app/sales/models/CustomerModel";
@@ -12,29 +14,58 @@ import type { Product } from "@/app/product/models/ProductModel";
 import type { ProductVariant } from "@/app/product/models/ProductVariantModel";
 import type { Warehouse } from "@/app/warehouse/models/WarehouseModel";
 import { SelectField, TextAreaField, TextField } from "@/components/FormField";
+import { AuthComponent } from "@/components/AuthComponent";
+import { UploadButton } from "@/components/UploadButton";
 import { OrderItemsEditor, newOrderItemRow, orderLineTotal, type OrderItemRow } from "@/app/sales/components/orderItems/OrderItemsEditor";
 import type { SessionInfo } from "@/libraries/Auth";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 
 const API_PATH = "/sales/api/v1/sales-orders";
 const PR_API = "/sales/api/v1/purchase-requests";
+const UPLOAD_PERMISSION = "base:tools:upload:upload";
+const NEW_FIELD_VALUE = "__new__";
+
+const rowLabelClass = "mb-1 block text-xs font-medium text-slate-600";
+const rowInputClass =
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500";
+const rowValueInputClass =
+  "w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500";
+
+type MetadataRow = {
+  key: string;
+  uuid?: string;
+  field_id: string;
+  value: string;
+  isNew: boolean;
+  newName: string;
+};
 
 export type SalesOrderFormInitial = Partial<Pick<SalesOrder, "customer_id" | "purchase_request_id" | "warehouse_id" | "discount_pct" | "notes" | "status">> & {
   items?: Array<{ product_id: string; variant_id: string | null; qty: number; unit_price: number; discount_pct: number; notes: string | null }>;
+  metadata?: Array<Pick<SalesOrderMetadata, "uuid" | "sales_doc_metadata_field_id" | "value"> & { field_name?: string }>;
 };
+
+function newMetadataRow(): MetadataRow {
+  return {
+    key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    field_id: "",
+    value: "",
+    isNew: false,
+    newName: "",
+  };
+}
 
 export function SalesOrderForm({
   mode,
   uuid,
   initial,
-  session: _session,
+  session,
 }: {
   mode: "create" | "edit";
   uuid?: string;
   initial?: SalesOrderFormInitial;
   session: SessionInfo;
 }) {
-  void _session;
   const router = useRouter();
   const autoCopiedRef = useRef(false);
   const [error, setError] = useState("");
@@ -44,6 +75,8 @@ export function SalesOrderForm({
   const [products, setProducts] = useState<Product[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>([]);
+  const [metadataFields, setMetadataFields] = useState<DocMetadataField[]>([]);
+  const [metadataFieldsError, setMetadataFieldsError] = useState("");
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? "");
   const [purchaseRequestId, setPurchaseRequestId] = useState(initial?.purchase_request_id ?? "");
   // Deep-linked PR (?purchase_request_id=) is fixed: the copy dropdown is
@@ -63,17 +96,28 @@ export function SalesOrderForm({
       notes: item.notes ?? "",
     })),
   );
+  const [metadataRows, setMetadataRows] = useState<MetadataRow[]>(() =>
+    (initial?.metadata ?? []).map((item, index) => ({
+      key: item.uuid ?? `initial-${index}-${Math.random().toString(36).slice(2)}`,
+      uuid: item.uuid,
+      field_id: item.sales_doc_metadata_field_id,
+      value: item.value,
+      isNew: false,
+      newName: "",
+    })),
+  );
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [customerResult, warehouseResult, productResult, variantResult, prResult] = await Promise.allSettled([
+        const [customerResult, warehouseResult, productResult, variantResult, prResult, metadataFieldResult] = await Promise.allSettled([
           getEncrypted<Customer[]>(`/sales/api/v1/customers?limit=100&sortProperty=name&sortDirection=asc`),
           getEncrypted<Warehouse[]>(`/warehouse/api/v1/warehouses?limit=100&sortProperty=code&sortDirection=asc`),
           getEncrypted<Product[]>(`/product/api/v1/products?limit=100&sortProperty=name&sortDirection=asc`),
           getEncrypted<ProductVariant[]>(`/product/api/v1/product-variants?limit=100&sortDirection=asc&sortProperty=name`),
           getEncrypted<PurchaseRequest[]>(`${PR_API}?limit=100&sortProperty=created_at&sortDirection=desc`),
+          getEncrypted<DocMetadataField[]>(`/sales/api/v1/doc-metadata-fields?limit=100&sortProperty=name&sortDirection=asc`),
         ]);
         if (!active) {
           return;
@@ -104,6 +148,11 @@ export function SalesOrderForm({
         } else {
           failed = true;
         }
+        if (metadataFieldResult.status === "fulfilled" && metadataFieldResult.value.success) {
+          setMetadataFields((metadataFieldResult.value.data ?? []).filter((row) => row.status !== "deleted"));
+        } else {
+          setMetadataFieldsError("Metadata fields failed to load. You can still add a new field manually.");
+        }
         if (failed) {
           setOptionsError("Some dropdowns failed to load. Selections may be incomplete.");
         }
@@ -121,6 +170,14 @@ export function SalesOrderForm({
       active = false;
     };
   }, []);
+
+  function updateMetadataRow(key: string, patch: Partial<MetadataRow>) {
+    setMetadataRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+
+  function removeMetadataRow(key: string) {
+    setMetadataRows((current) => current.filter((row) => row.key !== key));
+  }
 
   /** Copy deal prices from a PR: items + PR link, client-side only. */
   async function copyFromPr(prUuid: string) {
@@ -195,6 +252,37 @@ export function SalesOrderForm({
         setIsPending(false);
         return;
       }
+
+      const metadata = metadataRows
+        .map((row) => {
+          const value = row.value.trim();
+          if (!value) {
+            return null;
+          }
+          if (row.isNew) {
+            const name = row.newName.trim();
+            if (!name) {
+              return { invalid: true };
+            }
+            return { field_name: name, value, ...(row.uuid ? { uuid: row.uuid } : {}) };
+          }
+          if (!row.field_id) {
+            return { invalid: true };
+          }
+          return {
+            sales_doc_metadata_field_id: row.field_id,
+            value,
+            ...(row.uuid ? { uuid: row.uuid } : {}),
+          };
+        })
+        .filter(Boolean) as Record<string, unknown>[];
+      if (metadata.some((item) => item.invalid)) {
+        setError("Each metadata row needs a field (or a new field name) and a value.");
+        setIsPending(false);
+        return;
+      }
+      // Full selection state is submitted; omitted persisted rows are soft-deleted.
+      payload.metadata = metadata;
 
       if (mode === "create") {
         const items = rows.map((row) => ({
@@ -319,6 +407,92 @@ export function SalesOrderForm({
           </div>
 
           <TextAreaField label="Notes" name="notes" rows={3} defaultValue={initial?.notes ?? ""} placeholder="Order notes..." />
+
+          <div className="rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Sales order metadata</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Pick a shared document field or add one on the fly.</p>
+                {metadataFieldsError ? (
+                  <p role="alert" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {metadataFieldsError}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setMetadataRows((current) => [...current, newMetadataRow()])}
+                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                Add row
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {metadataRows.map((row, index) => (
+                <div key={row.key} className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_auto]">
+                  <div>
+                    <SelectField
+                      label={`Field #${index + 1}`}
+                      value={row.isNew ? NEW_FIELD_VALUE : row.field_id}
+                      onChange={(event) => {
+                        const selected = event.target.value;
+                        updateMetadataRow(row.key, selected === NEW_FIELD_VALUE
+                          ? { isNew: true, field_id: "", newName: "" }
+                          : { isNew: false, field_id: selected, newName: "" });
+                      }}
+                      options={[
+                        ...metadataFields.map((field) => ({ value: field.uuid, label: field.name })),
+                        { value: NEW_FIELD_VALUE, label: "+ Add new field..." },
+                      ]}
+                      placeholder={optionsLoading ? "Loading fields..." : "Select field..."}
+                      labelClassName={rowLabelClass}
+                      className={rowInputClass}
+                    />
+                    {row.isNew ? (
+                      <div className="mt-2">
+                        <TextField
+                          value={row.newName}
+                          onChange={(event) => updateMetadataRow(row.key, { newName: event.target.value })}
+                          placeholder="New field name, e.g. Project code"
+                          className={rowInputClass}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                  <TextField
+                    label="Value"
+                    value={row.value}
+                    onChange={(event) => updateMetadataRow(row.key, { value: event.target.value })}
+                    placeholder="Field value"
+                    labelClassName={rowLabelClass}
+                    className={rowValueInputClass}
+                    action={
+                      <AuthComponent
+                        user={session.user}
+                        permissions={session.permissions}
+                        allowedPermissions={[UPLOAD_PERMISSION]}
+                      >
+                        <UploadButton
+                          onUploaded={(url) => updateMetadataRow(row.key, { value: url })}
+                          onError={setError}
+                        />
+                      </AuthComponent>
+                    }
+                  />
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={() => removeMetadataRow(row.key)}
+                      aria-label={`Remove metadata row ${index + 1}`}
+                      className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {mode === "create" ? (
             <>

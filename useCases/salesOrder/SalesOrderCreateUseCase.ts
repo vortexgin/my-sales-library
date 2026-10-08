@@ -6,8 +6,9 @@ import PurchaseRequestModelFactory, { PurchaseRequestModel } from "@/app/sales/m
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
 import { nextDocNumber } from "@/app/sales/libraries/docNumber";
+import { syncSalesOrderMetadata, type SalesOrderMetadataNestedItem } from "@/app/sales/libraries/salesOrderMetadataSync";
 import { UserModel } from "@/app/base/models/UserModel";
-import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
+import type { ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import { checkTransaction, settleTransaction, type TransactionBilling } from "@/useCases/TransactionUseCase";
 import ForbiddenException from "@/exceptions/ForbiddenException";
@@ -22,6 +23,13 @@ const salesOrderItemSchema = Joi.object({
   notes: Joi.string().trim().allow("", null).optional(),
 });
 
+const salesOrderMetadataNestedSchema = Joi.object({
+  uuid: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  sales_doc_metadata_field_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+  field_name: Joi.string().trim().min(2).max(160).optional(),
+  value: Joi.string().trim().min(1).required(),
+}).or("uuid", "sales_doc_metadata_field_id", "field_name");
+
 const createSalesOrderSchema = Joi.object({
   customer_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   purchase_request_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
@@ -30,6 +38,7 @@ const createSalesOrderSchema = Joi.object({
   notes: Joi.string().trim().allow("", null).optional(),
   status: Joi.string().valid("draft", "confirmed", "paid", "shipped", "cancelled").optional(),
   items: Joi.array().items(salesOrderItemSchema).min(1).max(200).required(),
+  metadata: Joi.array().items(salesOrderMetadataNestedSchema).max(100).optional(),
 }).unknown(false);
 
 export type SalesOrderCreateContext = { input: CreateSalesOrderInput; actor: ActivityActor; organizationId: string | null } & TransactionBilling;
@@ -115,6 +124,13 @@ export class SalesOrderCreateUseCase extends BaseUseCase<CreateSalesOrderInput, 
       });
       items.push(SalesOrderItemModel.toApi(row.toJSON()));
     }
+
+    await syncSalesOrderMetadata(
+      header.uuid,
+      input.metadata as SalesOrderMetadataNestedItem[] | undefined,
+      organizationId,
+      context.actor,
+    );
 
     // Best-effort PR close, in scope: never fail the order for it.
     if (input.purchase_request_id) {

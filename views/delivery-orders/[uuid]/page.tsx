@@ -53,6 +53,7 @@ export default async function DeliveryOrderDetailPage({
     ? `${order.warehouse.name} (${order.warehouse.code})`
     : order.warehouse_id;
   const items = order.items ?? [];
+  const metadataRows = order.metadata ?? [];
 
   const canShip = hasPermission(session.user, session.permissions, ["sales:delivery-order:view:ship"]);
 
@@ -121,6 +122,21 @@ export default async function DeliveryOrderDetailPage({
                   </table>
                 </div>
               </>
+            ) : null}
+
+            {metadataRows.length > 0 ? (
+              <section className="mt-6">
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Metadata</p>
+                <dl className="mt-2 rounded-xl border border-slate-200 px-4">
+                  {metadataRows.map((item) => (
+                    <Row
+                      key={item.uuid}
+                      label={item.field_name ?? item.sales_doc_metadata_field_id}
+                      value={item.value}
+                    />
+                  ))}
+                </dl>
+              </section>
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">

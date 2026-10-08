@@ -1,5 +1,6 @@
 import { DataTypes, Model } from "sequelize";
 import { getSequelizeInstance } from "@/database/sequelize";
+import type { SalesOrderMetadata } from "@/app/sales/models/SalesOrderMetadataModel";
 
 export type SalesOrderStatus = "draft" | "confirmed" | "paid" | "shipped" | "cancelled";
 
@@ -64,6 +65,7 @@ export type SalesOrder = {
   updated_at: string;
   deleted_at: string | null;
   items?: SalesOrderItem[];
+  metadata?: Array<SalesOrderMetadata & { field_name?: string }>;
   /** Relation labels come from eager-loaded associations, not stored snapshots. Null when absent. */
   customer: SalesOrderCustomer | null;
   warehouse: SalesOrderWarehouse | null;
@@ -78,6 +80,12 @@ export type CreateSalesOrderInput = {
   notes?: string | null;
   status?: SalesOrderStatus;
   items: SalesOrderItemInput[];
+  metadata?: Array<{
+    uuid?: string;
+    sales_doc_metadata_field_id?: string;
+    field_name?: string;
+    value: string;
+  }>;
 };
 
 export type UpdateSalesOrderInput = {
@@ -85,9 +93,15 @@ export type UpdateSalesOrderInput = {
   discount_pct?: number;
   notes?: string | null;
   status?: SalesOrderStatus;
+  metadata?: Array<{
+    uuid?: string;
+    sales_doc_metadata_field_id?: string;
+    field_name?: string;
+    value: string;
+  }>;
 };
 
-export type SalesOrderModelAttributes = Partial<Omit<SalesOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "customer" | "warehouse" | "purchase_request">> & {
+export type SalesOrderModelAttributes = Partial<Omit<SalesOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "metadata" | "customer" | "warehouse" | "purchase_request">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;

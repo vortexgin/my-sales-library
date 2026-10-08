@@ -50,6 +50,12 @@ export default async function DeliveryOrderEditPage({
           initial={{
             notes: order.notes,
             status: order.status,
+            metadata: (order.metadata ?? []).map((item) => ({
+              uuid: item.uuid,
+              sales_doc_metadata_field_id: item.sales_doc_metadata_field_id,
+              field_name: item.field_name,
+              value: item.value,
+            })),
           }}
         />
       </main>
