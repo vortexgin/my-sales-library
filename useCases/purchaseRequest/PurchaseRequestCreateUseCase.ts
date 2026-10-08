@@ -4,6 +4,7 @@ import PurchaseRequestModelFactory, { PurchaseRequestModel, type CreatePurchaseR
 import PurchaseRequestItemModelFactory, { PurchaseRequestItemModel } from "@/app/sales/models/PurchaseRequestItemModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
+import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
@@ -24,6 +25,8 @@ const createPurchaseRequestSchema = Joi.object({
   warehouse_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   discount_pct: Joi.number().min(0).max(100).default(0),
   notes: Joi.string().trim().allow("", null).optional(),
+  // New requests always start as draft (transitions go through update).
+  status: Joi.string().valid("draft").optional(),
   items: Joi.array().items(purchaseRequestItemSchema).min(1).max(200).required(),
 }).unknown(false);
 
@@ -91,6 +94,7 @@ export class PurchaseRequestCreateUseCase extends BaseUseCase<CreatePurchaseRequ
     const header = await PurchaseRequestModel.create({
       uuid: randomUUID(),
       organization_id: organizationId ?? null,
+      doc_number: await nextDocNumber("PR", organizationId),
       customer_id: input.customer_id,
       warehouse_id: input.warehouse_id ?? null,
       status: "draft",

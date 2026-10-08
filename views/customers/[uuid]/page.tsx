@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { connectDatabase } from "@/database/sequelize";
 import { hasPermission } from "@/libraries/Permissions";
+import { formatMoney } from "@/libraries/Currency";
 import { AuthComponent } from "@/components/AuthComponent";
 import { AccessDenied } from "@/components/AccessDenied";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
@@ -174,8 +175,8 @@ export default async function CustomerDetailPage({
                       >
                         {order.uuid.slice(0, 8)} · {order.status}
                       </Link>
-                      <span className="inline-flex rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">
-                        {order.grand_total}
+                      <span className="inline-flex rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium tabular-nums text-green-700">
+                        {formatMoney(order.grand_total)}
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">

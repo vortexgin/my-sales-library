@@ -93,15 +93,12 @@ export class CustomerListUseCase extends BaseUseCase<ListCustomersInput | void, 
   ): Promise<void> {
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     if (typeof actorUuid !== "string") {
+      conditions.push({ organization_id: null });
       return;
     }
 
     const organization = await UserModel.resolveOrganization(actorUuid);
-    if (!organization) {
-      return;
-    }
-
-    conditions.push({ organization_id: organization.uuid });
+    conditions.push({ organization_id: organization?.uuid ?? null });
   }
 
   protected async execute(context: ListCustomersQuery): Promise<Customer[]> {

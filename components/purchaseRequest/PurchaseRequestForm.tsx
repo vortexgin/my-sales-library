@@ -10,7 +10,8 @@ import type { Product } from "@/app/product/models/ProductModel";
 import type { ProductVariant } from "@/app/product/models/ProductVariantModel";
 import type { Warehouse } from "@/app/warehouse/models/WarehouseModel";
 import { SelectField, TextAreaField, TextField } from "@/components/FormField";
-import { OrderItemsEditor, orderLineTotal, type OrderItemRow } from "@/components/OrderItemsEditor";
+import { formatMoney } from "@/libraries/Currency";
+import { OrderItemsEditor, orderLineTotal, type OrderItemRow } from "@/app/sales/components/orderItems/OrderItemsEditor";
 import type { SessionInfo } from "@/libraries/Auth";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 
@@ -117,12 +118,18 @@ export function PurchaseRequestForm({
     try {
       const formData = new FormData(event.currentTarget);
       const payload: Record<string, unknown> = {
-        customer_id: customerId || undefined,
         warehouse_id: warehouseId || null,
         discount_pct: Number(String(formData.get("discount_pct") ?? "").trim() || 0),
         notes: String(formData.get("notes") ?? "").trim() || null,
-        status: String(formData.get("status") ?? "draft"),
       };
+      // Customer is immutable after creation (update schema rejects it).
+      if (mode === "create") {
+        payload.customer_id = customerId || undefined;
+      }
+      // Status is edit-only: creates always start as draft (server default).
+      if (mode === "edit") {
+        payload.status = String(formData.get("status") ?? "draft");
+      }
       if (Number.isNaN(payload.discount_pct)) {
         setError("Discount must be a number.");
         setIsPending(false);
@@ -160,7 +167,7 @@ export function PurchaseRequestForm({
         setError(envelope.message || `Failed to ${mode === "create" ? "create" : "update"} purchase request.`);
         return;
       }
-      router.push(PURCHASE_REQUEST_LIST_PATH);
+      router.push(mode === "create" ? PURCHASE_REQUEST_LIST_PATH : `${PURCHASE_REQUEST_LIST_PATH}/${uuid}`);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -212,18 +219,24 @@ export function PurchaseRequestForm({
               step="any"
               defaultValue={initial?.discount_pct ?? 0}
             />
-            <SelectField
-              label="Status"
-              name="status"
-              defaultValue={initial?.status ?? "draft"}
-              options={[
-                { value: "draft", label: "draft" },
-                { value: "submitted", label: "submitted" },
-                { value: "approved", label: "approved" },
-                { value: "rejected", label: "rejected" },
-                { value: "closed", label: "closed" },
-              ]}
-            />
+            {mode === "create" ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Status: <span className="font-medium text-slate-900">draft</span> (new requests always start as draft)
+              </div>
+            ) : (
+              <SelectField
+                label="Status"
+                name="status"
+                defaultValue={initial?.status ?? "draft"}
+                options={[
+                  { value: "draft", label: "draft" },
+                  { value: "submitted", label: "submitted" },
+                  { value: "approved", label: "approved" },
+                  { value: "rejected", label: "rejected" },
+                  { value: "closed", label: "closed" },
+                ]}
+              />
+            )}
           </div>
 
           <TextAreaField label="Notes" name="notes" rows={3} defaultValue={initial?.notes ?? ""} placeholder="Request notes..." />
@@ -232,7 +245,7 @@ export function PurchaseRequestForm({
             <>
               <OrderItemsEditor rows={rows} setRows={setRows} products={products} variants={variants} />
               <p className="text-sm text-slate-600" role="status">
-                Items subtotal preview: {previewTotal} (server snapshots on save)
+                Items subtotal preview: {formatMoney(previewTotal)} (server snapshots on save)
               </p>
             </>
           ) : (

@@ -1,12 +1,15 @@
 import Joi from "joi";
 import { Op } from "sequelize";
 import DeliveryOrderModelFactory, { type DeliveryOrder } from "@/app/sales/models/DeliveryOrderModel";
+import SalesOrderModelFactory, { SalesOrderModel } from "@/app/sales/models/SalesOrderModel";
+import { customerNameById } from "@/app/sales/libraries/customerLabels";
 import { UserModel } from "@/app/base/models/UserModel";
 import { type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 
 export type ListDeliveryOrdersFilter = {
   sales_order_id?: string;
+  warehouse_id?: string;
   status?: string;
 };
 
@@ -20,6 +23,7 @@ export type ListDeliveryOrdersInput = {
 
 export type ListDeliveryOrdersQuery = {
   sales_order_id?: string;
+  warehouse_id?: string;
   status?: string;
   sortProperty: string;
   sortDirection: "ASC" | "DESC";
@@ -30,6 +34,7 @@ export type ListDeliveryOrdersQuery = {
 
 const SORTABLE_COLUMNS: Record<string, string> = {
   uuid: "uuid",
+  doc_number: "doc_number",
   status: "status",
   created_at: "created_at",
   updated_at: "updated_at",
@@ -38,6 +43,7 @@ const SORTABLE_COLUMNS: Record<string, string> = {
 const listDeliveryOrdersSchema = Joi.object({
   filter: Joi.object({
     sales_order_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+    warehouse_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
     status: Joi.string().trim().allow("").optional(),
   }).optional(),
   sortProperty: Joi.string()
@@ -62,6 +68,7 @@ export class DeliveryOrderListUseCase extends BaseUseCase<ListDeliveryOrdersInpu
 
     return {
       sales_order_id: filter.sales_order_id || undefined,
+      warehouse_id: filter.warehouse_id || undefined,
       status: filter.status?.trim() || undefined,
       sortProperty: SORTABLE_COLUMNS[validated.sortProperty.toLowerCase()] ?? "created_at",
       sortDirection: validated.sortDirection.toUpperCase() as "ASC" | "DESC",
@@ -77,15 +84,12 @@ export class DeliveryOrderListUseCase extends BaseUseCase<ListDeliveryOrdersInpu
   ): Promise<void> {
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     if (typeof actorUuid !== "string") {
+      conditions.push({ organization_id: null });
       return;
     }
 
     const organization = await UserModel.resolveOrganization(actorUuid);
-    if (!organization) {
-      return;
-    }
-
-    conditions.push({ organization_id: organization.uuid });
+    conditions.push({ organization_id: organization?.uuid ?? null });
   }
 
   protected async execute(context: ListDeliveryOrdersQuery): Promise<DeliveryOrder[]> {
@@ -94,6 +98,10 @@ export class DeliveryOrderListUseCase extends BaseUseCase<ListDeliveryOrdersInpu
 
     if (context.sales_order_id) {
       conditions.push({ sales_order_id: context.sales_order_id });
+    }
+
+    if (context.warehouse_id) {
+      conditions.push({ warehouse_id: context.warehouse_id });
     }
 
     if (context.status) {
@@ -109,6 +117,21 @@ export class DeliveryOrderListUseCase extends BaseUseCase<ListDeliveryOrdersInpu
       limit: context.limit,
     });
 
-    return rows.map((row) => DeliveryOrderModel.toApi(row.toJSON()));
+    // Customer via the parent sales order (DO carries no customer_id).
+    await SalesOrderModelFactory();
+    const parents = await SalesOrderModel.findAll({
+      where: { uuid: [...new Set(rows.map((row) => row.sales_order_id))] },
+      attributes: ["uuid", "customer_id"],
+    });
+    const customerIdByOrder = new Map(parents.map((order) => [order.uuid, order.customer_id]));
+    const names = await customerNameById([...customerIdByOrder.values()]);
+    return rows.map((row) => {
+      const json = row.toJSON() as Record<string, unknown>;
+      const customerId = customerIdByOrder.get(row.sales_order_id);
+      const name = customerId ? names.get(customerId) : undefined;
+      return DeliveryOrderModel.toApi(
+        name && customerId ? { ...json, customer: { uuid: customerId, name } } : json,
+      );
+    });
   }
 }

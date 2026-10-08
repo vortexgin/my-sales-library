@@ -22,14 +22,36 @@ export type SalesOrderItem = {
   discount_pct: number;
   line_total: number;
   notes: string | null;
+  /** Relation labels resolved in the Get useCase (UUID fallback on pages). Null when not loaded. */
+  product_sku: string | null;
+  product_name: string | null;
+  variant_sku: string | null;
+  variant_name: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
 };
 
+export type SalesOrderCustomer = {
+  id: string;
+  name: string;
+};
+
+export type SalesOrderWarehouse = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type SalesOrderPurchaseRequest = {
+  id: string;
+  status: string;
+};
+
 export type SalesOrder = {
   uuid: string;
   organization_id: string | null;
+  doc_number: string | null;
   customer_id: string;
   purchase_request_id: string | null;
   warehouse_id: string | null;
@@ -42,6 +64,10 @@ export type SalesOrder = {
   updated_at: string;
   deleted_at: string | null;
   items?: SalesOrderItem[];
+  /** Relation labels come from eager-loaded associations, not stored snapshots. Null when absent. */
+  customer: SalesOrderCustomer | null;
+  warehouse: SalesOrderWarehouse | null;
+  purchase_request: SalesOrderPurchaseRequest | null;
 };
 
 export type CreateSalesOrderInput = {
@@ -61,7 +87,7 @@ export type UpdateSalesOrderInput = {
   status?: SalesOrderStatus;
 };
 
-export type SalesOrderModelAttributes = Partial<Omit<SalesOrder, "created_at" | "updated_at" | "deleted_at" | "items">> & {
+export type SalesOrderModelAttributes = Partial<Omit<SalesOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "customer" | "warehouse" | "purchase_request">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -72,6 +98,7 @@ export type SalesOrderModelCreationAttributes = Partial<SalesOrderModelAttribute
 export class SalesOrderModel extends Model<SalesOrderModelAttributes, SalesOrderModelCreationAttributes> {
   declare uuid: string;
   declare organization_id: string | null;
+  declare doc_number: string | null;
   declare customer_id: string;
   declare purchase_request_id: string | null;
   declare warehouse_id: string | null;
@@ -85,9 +112,13 @@ export class SalesOrderModel extends Model<SalesOrderModelAttributes, SalesOrder
   declare deleted_at: Date | null;
 
   static toApi(row: any): SalesOrder {
+    const customer = row.customer ?? null;
+    const warehouse = row.warehouse ?? null;
+    const purchaseRequest = row.purchase_request ?? null;
     return {
       uuid: row.uuid,
       organization_id: row.organization_id ?? null,
+      doc_number: row.doc_number ?? null,
       customer_id: row.customer_id,
       purchase_request_id: row.purchase_request_id ?? null,
       warehouse_id: row.warehouse_id ?? null,
@@ -96,6 +127,13 @@ export class SalesOrderModel extends Model<SalesOrderModelAttributes, SalesOrder
       discount_pct: typeof row.discount_pct === "number" ? row.discount_pct : 0,
       grand_total: typeof row.grand_total === "number" ? row.grand_total : 0,
       notes: row.notes ?? null,
+      customer: customer ? { id: customer.uuid ?? "", name: customer.name ?? "" } : null,
+      warehouse: warehouse
+        ? { id: warehouse.uuid ?? "", code: warehouse.code ?? "", name: warehouse.name ?? "" }
+        : null,
+      purchase_request: purchaseRequest
+        ? { id: purchaseRequest.uuid ?? "", status: purchaseRequest.status ?? "" }
+        : null,
       created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
       updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
       deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
@@ -141,6 +179,11 @@ async function initSalesOrderModel(): Promise<typeof SalesOrderModel> {
         },
         organization_id: {
           type: DataTypes.UUID,
+          allowNull: true,
+          defaultValue: null,
+        },
+        doc_number: {
+          type: DataTypes.STRING(40),
           allowNull: true,
           defaultValue: null,
         },

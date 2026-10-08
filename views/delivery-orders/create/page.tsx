@@ -29,7 +29,7 @@ export default async function DeliveryOrderCreatePage({
     >
 
       <main className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
-        <DeliveryOrderForm session={session} initialSalesOrderId={query.sales_order_id} />
+        <DeliveryOrderForm mode="create" session={session} initialSalesOrderId={query.sales_order_id} />
       </main>
     </AuthComponent>
   );

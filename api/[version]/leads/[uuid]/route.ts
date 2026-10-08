@@ -17,7 +17,7 @@ async function handleGet(
   try {
     await connectDatabase();
     const { uuid } = await params;
-    const lead = await new LeadGetUseCase().exec(uuid);
+    const lead = await new LeadGetUseCase().exec(uuid, await actorFromRequest(_request));
 
     return ok(lead);
   } catch (error: any) {

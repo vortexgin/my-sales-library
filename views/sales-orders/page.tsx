@@ -9,8 +9,27 @@ export const metadata: Metadata = {
   title: "Sales orders | VortexGin",
 };
 
-export default async function SalesOrderListPage() {
+export default async function SalesOrderListPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ purchase_request_id?: string; customer_id?: string; warehouse_id?: string; status?: string }>;
+}) {
   const session = await requireSession();
+  const query = (await searchParams) ?? {};
+  // Deep-link presets (e.g. "View sales order" on the PR detail page).
+  const initialParams: Record<string, string> = {};
+  if (query.purchase_request_id) {
+    initialParams["filter[purchase_request_id]"] = query.purchase_request_id;
+  }
+  if (query.customer_id) {
+    initialParams["filter[customer_id]"] = query.customer_id;
+  }
+  if (query.warehouse_id) {
+    initialParams["filter[warehouse_id]"] = query.warehouse_id;
+  }
+  if (query.status) {
+    initialParams["filter[status]"] = query.status;
+  }
 
   return (
     <AuthComponent
@@ -48,7 +67,7 @@ export default async function SalesOrderListPage() {
               </AuthComponent>
             </div>
 
-            <SalesOrderTable session={session} />
+            <SalesOrderTable session={session} initialParams={initialParams} />
           </div>
         </div>
       </main>

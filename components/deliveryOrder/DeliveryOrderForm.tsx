@@ -2,18 +2,24 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { DELIVERY_ORDER_LIST_PATH } from "@/app/sales/views/delivery-orders/paths";
 import type { DeliveryOrder } from "@/app/sales/models/DeliveryOrderModel";
+import { formatMoney } from "@/libraries/Currency";
 import type { SalesOrder } from "@/app/sales/models/SalesOrderModel";
 import type { Product } from "@/app/product/models/ProductModel";
 import type { ProductVariant } from "@/app/product/models/ProductVariantModel";
 import type { Warehouse } from "@/app/warehouse/models/WarehouseModel";
 import { SelectField, TextAreaField } from "@/components/FormField";
 import type { SessionInfo } from "@/libraries/Auth";
-import { getEncrypted, postEncrypted } from "@/libraries/EncryptedFetch";
+import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 
 const API_PATH = "/sales/api/v1/delivery-orders";
+
+export type DeliveryOrderFormInitial = {
+  notes?: string | null;
+  status?: string;
+};
 
 type ItemRow = {
   key: string;
@@ -32,9 +38,15 @@ function newItemRow(): ItemRow {
 }
 
 export function DeliveryOrderForm({
+  mode,
+  uuid,
+  initial,
   session: _session,
   initialSalesOrderId,
 }: {
+  mode: "create" | "edit";
+  uuid?: string;
+  initial?: DeliveryOrderFormInitial;
   session: SessionInfo;
   initialSalesOrderId?: string;
 }) {
@@ -48,12 +60,103 @@ export function DeliveryOrderForm({
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [salesOrderId, setSalesOrderId] = useState(initialSalesOrderId ?? "");
   const [warehouseId, setWarehouseId] = useState("");
-  const [optionsLoading, setOptionsLoading] = useState(true);
+  const [optionsLoading, setOptionsLoading] = useState(mode === "create");
   const [optionsError, setOptionsError] = useState("");
   const [rows, setRows] = useState<ItemRow[]>([newItemRow()]);
+  // Products/variants selectable on items are restricted to the selected
+  // SO's lines (null = no SO chosen yet → unrestricted). Best-effort: a
+  // failed lookup keeps the full lists rather than blocking creation.
+  const [soProductIds, setSoProductIds] = useState<string[] | null>(null);
+  const [soVariantIds, setSoVariantIds] = useState<string[] | null>(null);
+  // Remaining per SO line (ordered − already shipped), keyed by
+  // product|variant. Null = no SO chosen (unrestricted).
+  const [soRemainingByKey, setSoRemainingByKey] = useState<Record<string, number> | null>(null);
+
+  function soLineKey(productId: string, variantId: string | null): string {
+    return `${productId}|${variantId ?? ""}`;
+  }
+
+  const restrictToSalesOrder = useCallback(async (soId: string) => {
+    if (!soId) {
+      setSoProductIds(null);
+      setSoVariantIds(null);
+      setSoRemainingByKey(null);
+      return;
+    }
+    try {
+      const envelope = await getEncrypted<{
+        items?: Array<{ product_id: string; variant_id: string | null; qty: number }>;
+      }>(`/sales/api/v1/sales-orders/${soId}`);
+      if (!envelope.success) {
+        return;
+      }
+      const items = envelope.data?.items ?? [];
+      setSoProductIds([...new Set(items.map((item) => item.product_id))]);
+      setSoVariantIds([
+        ...new Set(items.map((item) => item.variant_id).filter((id): id is string => !!id)),
+      ]);
+      const orderedByKey: Record<string, number> = {};
+      for (const item of items) {
+        const key = `${item.product_id}|${item.variant_id ?? ""}`;
+        orderedByKey[key] = (orderedByKey[key] ?? 0) + (typeof item.qty === "number" ? item.qty : 0);
+      }
+      // Subtract already shipped (shipped/delivered, any fulfillment).
+      // Lookup failure keeps ordered qty as the cap; the server enforces
+      // the exact remaining figure.
+      try {
+        const doEnvelope = await getEncrypted<DeliveryOrder[]>(
+          `/sales/api/v1/delivery-orders?filter[sales_order_id]=${soId}&limit=100`,
+        );
+        const shippedIds = (doEnvelope.success ? (doEnvelope.data ?? []) : [])
+          .filter((row) => row.status === "shipped" || row.status === "delivered")
+          .map((row) => row.uuid);
+        const shippedByKey: Record<string, number> = {};
+        const details = await Promise.all(
+          shippedIds.map((id) =>
+            getEncrypted<{ items?: Array<{ product_id: string; variant_id: string | null; qty: number }> }>(
+              `/sales/api/v1/delivery-orders/${id}`,
+            ).catch(() => null),
+          ),
+        );
+        for (const detail of details) {
+          for (const item of detail?.data?.items ?? []) {
+            const key = `${item.product_id}|${item.variant_id ?? ""}`;
+            shippedByKey[key] = (shippedByKey[key] ?? 0) + (typeof item.qty === "number" ? item.qty : 0);
+          }
+        }
+        const remainingByKey: Record<string, number> = {};
+        for (const [key, ordered] of Object.entries(orderedByKey)) {
+          remainingByKey[key] = ordered - (shippedByKey[key] ?? 0);
+        }
+        setSoRemainingByKey(remainingByKey);
+      } catch {
+        setSoRemainingByKey(orderedByKey);
+      }
+    } catch {
+      // Keep full lists on failure — server validates existence, not SO scope.
+    }
+  }, []);
+
+  // Re-restrict whenever the selected SO changes (incl. deep-linked mount).
+  // Empty selection resets synchronously in the select handler below.
+  useEffect(() => {
+    if (mode !== "create" || !salesOrderId) {
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void restrictToSalesOrder(salesOrderId);
+  }, [mode, salesOrderId, restrictToSalesOrder]);
+  // Deep-linked SO (?sales_order_id=) is fixed on create; SO/warehouse/items
+  // are immutable on edit (update accepts notes + status only).
+  const soLocked = mode === "create" && !!initialSalesOrderId;
 
   useEffect(() => {
     let active = true;
+    if (mode !== "create") {
+      return () => {
+        active = false;
+      };
+    }
     (async () => {
       try {
         const [orderResult, warehouseResult, productResult, variantResult] = await Promise.allSettled([
@@ -102,7 +205,7 @@ export function DeliveryOrderForm({
     return () => {
       active = false;
     };
-  }, []);
+  }, [mode]);
 
   function updateRow(key: string, patch: Partial<ItemRow>) {
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
@@ -121,6 +224,19 @@ export function DeliveryOrderForm({
     setIsPending(true);
     try {
       const formData = new FormData(event.currentTarget);
+      if (mode === "edit") {
+        const payload: Record<string, unknown> = {
+          notes: String(formData.get("notes") ?? "").trim() || null,
+          status: String(formData.get("status") ?? "draft"),
+        };
+        const envelope = await putEncrypted<DeliveryOrder>(`${API_PATH}/${uuid}`, payload);
+        if (!envelope.success) {
+          setError(envelope.message || "Failed to update delivery order.");
+          return;
+        }
+        router.push(`${DELIVERY_ORDER_LIST_PATH}/${uuid}`);
+        return;
+      }
       const items = rows.map((row) => ({
         product_id: row.product_id || undefined,
         variant_id: row.variant_id || null,
@@ -135,6 +251,19 @@ export function DeliveryOrderForm({
         setError("Each item needs a product and qty ≥ 1.");
         setIsPending(false);
         return;
+      }
+      if (soRemainingByKey) {
+        const requestedByKey: Record<string, number> = {};
+        for (const item of items) {
+          const key = soLineKey(String(item.product_id), (item.variant_id as string | null) ?? null);
+          requestedByKey[key] = (requestedByKey[key] ?? 0) + (item.qty as number);
+        }
+        const over = Object.entries(requestedByKey).find(([key, qty]) => qty > (soRemainingByKey[key] ?? 0));
+        if (over) {
+          setError(`Qty ${over[1]} exceeds the remaining sales order qty ${soRemainingByKey[over[0]] ?? 0}.`);
+          setIsPending(false);
+          return;
+        }
       }
 
       const payload: Record<string, unknown> = {
@@ -160,34 +289,78 @@ export function DeliveryOrderForm({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="rounded-[28px] border border-slate-200 bg-white/90 p-6 shadow-[0_30px_80px_rgba(15,23,42,0.12)] backdrop-blur-sm sm:p-8">
-        <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">New delivery order</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Create delivery order.</h1>
+        <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">
+          {mode === "create" ? "New delivery order" : "Edit delivery order"}
+        </p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+          {mode === "create" ? "Create delivery order." : "Update delivery order."}
+        </h1>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <SelectField
-              label="Sales order"
-              name="sales_order_id"
-              value={salesOrderId}
-              onChange={(event) => setSalesOrderId(event.target.value)}
-              disabled={optionsLoading}
-              options={orders.map((option) => ({ value: option.uuid, label: `${option.uuid.slice(0, 8)} · ${option.status} · ${option.grand_total}` }))}
-              placeholder={optionsLoading ? "Loading sales orders..." : "Select sales order..."}
-            />
-            <SelectField
-              label="Warehouse"
-              name="warehouse_id"
-              value={warehouseId}
-              onChange={(event) => setWarehouseId(event.target.value)}
-              disabled={optionsLoading}
-              options={warehouses.map((option) => ({ value: option.uuid, label: `${option.code} · ${option.name}` }))}
-              placeholder={optionsLoading ? "Loading warehouses..." : "Select warehouse..."}
-            />
-          </div>
+          {mode === "edit" ? (
+            <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Sales order, warehouse and items are fixed after creation; edit notes and status only.
+            </p>
+          ) : null}
+          {mode === "edit" ? null : (
+            <div className="grid gap-5 sm:grid-cols-2">
+              {soLocked ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 sm:col-span-2">
+                  Sales order:{" "}
+                  <span className="font-medium text-slate-900">
+                    {(initialSalesOrderId ?? "").slice(0, 8)}
+                  </span>{" "}
+                  (fixed from the sales order page)
+                </div>
+              ) : (
+                <SelectField
+                  label="Sales order"
+                  name="sales_order_id"
+                  value={salesOrderId}
+                  onChange={(event) => {
+                    setSalesOrderId(event.target.value);
+                    setRows([newItemRow()]);
+                    if (!event.target.value) {
+                      setSoProductIds(null);
+                      setSoVariantIds(null);
+                      setSoRemainingByKey(null);
+                    }
+                  }}
+                  disabled={optionsLoading}
+                  options={orders.map((option) => ({ value: option.uuid, label: `${option.doc_number ?? option.uuid.slice(0, 8)} · ${option.status} · ${formatMoney(option.grand_total)}` }))}
+                  placeholder={optionsLoading ? "Loading sales orders..." : "Select sales order..."}
+                />
+              )}
+              <SelectField
+                label="Warehouse"
+                name="warehouse_id"
+                value={warehouseId}
+                onChange={(event) => setWarehouseId(event.target.value)}
+                disabled={optionsLoading}
+                options={warehouses.map((option) => ({ value: option.uuid, label: `${option.code} · ${option.name}` }))}
+                placeholder={optionsLoading ? "Loading warehouses..." : "Select warehouse..."}
+              />
+            </div>
+          )}
+          <TextAreaField label="Notes" name="notes" rows={3} defaultValue={initial?.notes ?? ""} placeholder="Delivery notes..." />
 
-          <TextAreaField label="Notes" name="notes" rows={3} placeholder="Delivery notes..." />
+          {mode === "edit" ? (
+            <SelectField
+              label="Status"
+              name="status"
+              defaultValue={initial?.status ?? "draft"}
+              options={[
+                { value: "draft", label: "draft" },
+                { value: "packed", label: "packed" },
+                { value: "delivered", label: "delivered" },
+                { value: "cancelled", label: "cancelled" },
+              ]}
+              hint="Shipment itself goes through the Ship control (system/paper)."
+            />
+          ) : null}
 
-          <div className="rounded-2xl border border-slate-200 p-4">
+          {mode === "create" ? (
+            <div className="rounded-2xl border border-slate-200 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Items</h2>
@@ -202,21 +375,24 @@ export function DeliveryOrderForm({
               </button>
             </div>
             <div className="mt-4 space-y-3">
-              {rows.map((row, index) => (
+              {rows.map((row, index) => {
+                const maxQty = soRemainingByKey?.[soLineKey(row.product_id, row.variant_id || null)];
+                return (
                 <div key={row.key} className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_0.6fr_auto]">
                   <SelectField
                     label={`Product #${index + 1}`}
                     value={row.product_id}
                     onChange={(event) => updateRow(row.key, { product_id: event.target.value, variant_id: "" })}
-                    options={products.map((option) => ({ value: option.uuid, label: `${option.name} · ${option.sku}` }))}
+                    options={(soProductIds ? products.filter((option) => soProductIds.includes(option.uuid)) : products).map((option) => ({ value: option.uuid, label: `${option.name} · ${option.sku}` }))}
                     placeholder="Select product..."
+                    hint={soProductIds ? "Only products on the selected sales order." : undefined}
                   />
                   <SelectField
                     label="Variant"
                     value={row.variant_id}
                     onChange={(event) => updateRow(row.key, { variant_id: event.target.value })}
                     options={variants
-                      .filter((option) => !row.product_id || option.product_id === row.product_id)
+                      .filter((option) => (!row.product_id || option.product_id === row.product_id) && (!soVariantIds || soVariantIds.includes(option.uuid)))
                       .map((option) => ({ value: option.uuid, label: `${option.name} · ${option.sku}` }))}
                     placeholder="— No variant —"
                   />
@@ -227,10 +403,14 @@ export function DeliveryOrderForm({
                         type="number"
                         min={1}
                         step={1}
+                        max={maxQty}
                         value={row.qty}
                         onChange={(event) => updateRow(row.key, { qty: event.target.value })}
                         className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
                       />
+                      {typeof maxQty === "number" ? (
+                        <span className="mt-1 block text-[11px] text-slate-500">Max {maxQty} remaining on the sales order.</span>
+                      ) : null}
                     </label>
                   </div>
                   <div className="flex items-end">
@@ -244,9 +424,11 @@ export function DeliveryOrderForm({
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
+          ) : null}
 
           {optionsError ? (
             <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -266,7 +448,7 @@ export function DeliveryOrderForm({
               disabled={isPending || optionsLoading}
               className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500"
             >
-              {isPending ? "Saving..." : "Create delivery order"}
+              {isPending ? "Saving..." : mode === "create" ? "Create delivery order" : "Save changes"}
             </button>
             <Link
               href={DELIVERY_ORDER_LIST_PATH}

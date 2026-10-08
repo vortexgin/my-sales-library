@@ -53,7 +53,7 @@ export default async function PurchaseRequestEditPage({
             discount_pct: request.discount_pct,
             notes: request.notes,
             status: request.status,
-            items: request.items.map((item: { product_id: string; variant_id: string | null; qty: number; unit_price: number; discount_pct: number; notes: string | null }) => ({
+            items: (request.items ?? []).map((item) => ({
               product_id: item.product_id,
               variant_id: item.variant_id,
               qty: item.qty,

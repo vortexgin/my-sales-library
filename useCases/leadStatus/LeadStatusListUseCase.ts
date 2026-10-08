@@ -79,9 +79,8 @@ export class LeadStatusListUseCase extends BaseUseCase<ListLeadStatusesInput | v
   }
 
   /**
-   * Restricts listing to the actor's organization statuses when the
-   * organization module is present and the actor is linked.
-   * Unlinked actors (and missing module) keep full visibility.
+   * Strict same-org scoping: linked actors see their organization's rows,
+   * unlinked actors see unlinked rows only.
    */
   private async applyOrganizationScope(
     conditions: Record<string, unknown>[],
@@ -89,15 +88,12 @@ export class LeadStatusListUseCase extends BaseUseCase<ListLeadStatusesInput | v
   ): Promise<void> {
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     if (typeof actorUuid !== "string") {
+      conditions.push({ organization_id: null });
       return;
     }
 
     const organization = await UserModel.resolveOrganization(actorUuid);
-    if (!organization) {
-      return;
-    }
-
-    conditions.push({ organization_id: organization.uuid });
+    conditions.push({ organization_id: organization?.uuid ?? null });
   }
 
   protected async execute(context: ListLeadStatusesQuery): Promise<LeadStatus[]> {

@@ -124,9 +124,8 @@ export class LeadListUseCase extends BaseUseCase<ListLeadsInput | void, Lead[], 
   }
 
   /**
-   * Restricts listing to the actor's organization leads when the
-   * organization module is present and the actor is linked.
-   * Unlinked actors (and missing module) keep full visibility.
+   * Strict same-org scoping (mirrors Get/convert): linked actors see their
+   * org's rows, unlinked actors see unlinked rows only.
    */
   private async applyOrganizationScope(
     conditions: Record<string, unknown>[],
@@ -134,15 +133,12 @@ export class LeadListUseCase extends BaseUseCase<ListLeadsInput | void, Lead[], 
   ): Promise<void> {
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     if (typeof actorUuid !== "string") {
+      conditions.push({ organization_id: null });
       return;
     }
 
     const organization = await UserModel.resolveOrganization(actorUuid);
-    if (!organization) {
-      return;
-    }
-
-    conditions.push({ organization_id: organization.uuid });
+    conditions.push({ organization_id: organization?.uuid ?? null });
   }
 
   protected async execute(context: ListLeadsQuery): Promise<Lead[]> {

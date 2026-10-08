@@ -9,8 +9,23 @@ export const metadata: Metadata = {
   title: "Delivery orders | VortexGin",
 };
 
-export default async function DeliveryOrderListPage() {
+export default async function DeliveryOrderListPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ sales_order_id?: string; warehouse_id?: string; status?: string }>;
+}) {
   const session = await requireSession();
+  const query = (await searchParams) ?? {};
+  const initialParams: Record<string, string> = {};
+  if (query.sales_order_id) {
+    initialParams["filter[sales_order_id]"] = query.sales_order_id;
+  }
+  if (query.warehouse_id) {
+    initialParams["filter[warehouse_id]"] = query.warehouse_id;
+  }
+  if (query.status) {
+    initialParams["filter[status]"] = query.status;
+  }
 
   return (
     <AuthComponent
@@ -48,7 +63,7 @@ export default async function DeliveryOrderListPage() {
               </AuthComponent>
             </div>
 
-            <DeliveryOrderTable session={session} />
+            <DeliveryOrderTable session={session} initialParams={initialParams} />
           </div>
         </div>
       </main>

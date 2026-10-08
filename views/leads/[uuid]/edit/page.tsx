@@ -24,7 +24,7 @@ export default async function LeadEditPage({
 
   let lead;
   try {
-    lead = await new LeadGetUseCase().exec(uuid);
+    lead = await new LeadGetUseCase().exec(uuid, session.user);
   } catch {
     notFound();
   }

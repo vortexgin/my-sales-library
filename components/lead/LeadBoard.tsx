@@ -9,6 +9,7 @@ import type { LeadStatus } from "@/app/sales/models/LeadStatusModel";
 import type { User } from "@/app/base/models/UserModel";
 import type { SessionInfo } from "@/libraries/Auth";
 import { hasPermission } from "@/libraries/Permissions";
+import { formatMoney } from "@/libraries/Currency";
 import { getEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 import {
   deleteBoardView,
@@ -513,8 +514,8 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                       </span>
                     ) : null}
                   </h2>
-                  <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
-                    {column.leads.length} · {column.total}
+                  <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-700">
+                    {column.leads.length} · {formatMoney(column.total)}
                   </span>
                 </div>
                 {column.description ? (
@@ -555,8 +556,8 @@ export function LeadBoard({ session }: { session: SessionInfo }) {
                             {lead.source}
                           </span>
                           {typeof lead.value === "number" ? (
-                            <span className="inline-flex rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
-                              {lead.value}
+                            <span className="inline-flex rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium tabular-nums text-green-700">
+                              {formatMoney(lead.value)}
                             </span>
                           ) : null}
                           {!lead.assigned_to ? (

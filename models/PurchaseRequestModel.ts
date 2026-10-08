@@ -22,14 +22,31 @@ export type PurchaseRequestItem = {
   discount_pct: number;
   line_total: number;
   notes: string | null;
+  /** Relation labels resolved in the Get useCase (UUID fallback on pages). Null when not loaded. */
+  product_sku: string | null;
+  product_name: string | null;
+  variant_sku: string | null;
+  variant_name: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
 };
 
+export type PurchaseRequestCustomer = {
+  id: string;
+  name: string;
+};
+
+export type PurchaseRequestWarehouse = {
+  id: string;
+  code: string;
+  name: string;
+};
+
 export type PurchaseRequest = {
   uuid: string;
   organization_id: string | null;
+  doc_number: string | null;
   customer_id: string;
   warehouse_id: string | null;
   status: PurchaseRequestStatus;
@@ -41,6 +58,9 @@ export type PurchaseRequest = {
   updated_at: string;
   deleted_at: string | null;
   items?: PurchaseRequestItem[];
+  /** Relation labels come from eager-loaded associations, not stored snapshots. Null when absent. */
+  customer: PurchaseRequestCustomer | null;
+  warehouse: PurchaseRequestWarehouse | null;
 };
 
 export type CreatePurchaseRequestInput = {
@@ -59,7 +79,7 @@ export type UpdatePurchaseRequestInput = {
   status?: PurchaseRequestStatus;
 };
 
-export type PurchaseRequestModelAttributes = Partial<Omit<PurchaseRequest, "created_at" | "updated_at" | "deleted_at" | "items">> & {
+export type PurchaseRequestModelAttributes = Partial<Omit<PurchaseRequest, "created_at" | "updated_at" | "deleted_at" | "items" | "customer" | "warehouse">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -70,6 +90,7 @@ export type PurchaseRequestModelCreationAttributes = Partial<PurchaseRequestMode
 export class PurchaseRequestModel extends Model<PurchaseRequestModelAttributes, PurchaseRequestModelCreationAttributes> {
   declare uuid: string;
   declare organization_id: string | null;
+  declare doc_number: string | null;
   declare customer_id: string;
   declare warehouse_id: string | null;
   declare status: PurchaseRequestStatus;
@@ -82,9 +103,12 @@ export class PurchaseRequestModel extends Model<PurchaseRequestModelAttributes, 
   declare deleted_at: Date | null;
 
   static toApi(row: any): PurchaseRequest {
+    const customer = row.customer ?? null;
+    const warehouse = row.warehouse ?? null;
     return {
       uuid: row.uuid,
       organization_id: row.organization_id ?? null,
+      doc_number: row.doc_number ?? null,
       customer_id: row.customer_id,
       warehouse_id: row.warehouse_id ?? null,
       status: row.status,
@@ -92,6 +116,10 @@ export class PurchaseRequestModel extends Model<PurchaseRequestModelAttributes, 
       discount_pct: typeof row.discount_pct === "number" ? row.discount_pct : 0,
       grand_total: typeof row.grand_total === "number" ? row.grand_total : 0,
       notes: row.notes ?? null,
+      customer: customer ? { id: customer.uuid ?? "", name: customer.name ?? "" } : null,
+      warehouse: warehouse
+        ? { id: warehouse.uuid ?? "", code: warehouse.code ?? "", name: warehouse.name ?? "" }
+        : null,
       created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
       updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
       deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
@@ -137,6 +165,11 @@ async function initPurchaseRequestModel(): Promise<typeof PurchaseRequestModel> 
         },
         organization_id: {
           type: DataTypes.UUID,
+          allowNull: true,
+          defaultValue: null,
+        },
+        doc_number: {
+          type: DataTypes.STRING(40),
           allowNull: true,
           defaultValue: null,
         },

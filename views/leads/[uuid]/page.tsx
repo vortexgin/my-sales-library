@@ -11,6 +11,8 @@ import { LEAD_LIST_PATH } from "@/app/sales/views/leads/paths";
 import { requireSession } from "@/libraries/Auth";
 import { hasPermission } from "@/libraries/Permissions";
 import { LeadGetUseCase } from "@/app/sales/useCases/lead/LeadGetUseCase";
+import { formatMoney } from "@/libraries/Currency";
+import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { LeadMetadataListUseCase } from "@/app/sales/useCases/leadMetadata/LeadMetadataListUseCase";
 import { LeadMetadataFieldListUseCase } from "@/app/sales/useCases/leadMetadataField/LeadMetadataFieldListUseCase";
 import { LeadActivityListUseCase } from "@/app/sales/useCases/leadActivity/LeadActivityListUseCase";
@@ -19,11 +21,11 @@ export const metadata: Metadata = {
   title: "Lead detail | VortexGin",
 };
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, numeric }: { label: string; value: string; numeric?: boolean }) {
   return (
     <div className="flex flex-col gap-1 border-b border-slate-100 py-3 last:border-0 sm:flex-row sm:items-baseline sm:gap-6">
       <dt className="w-32 shrink-0 text-xs font-medium uppercase tracking-wider text-slate-500">{label}</dt>
-      <dd className="break-all text-sm text-slate-900">{value}</dd>
+      <dd className={`break-all text-sm text-slate-900${numeric ? " tabular-nums sm:ml-auto sm:text-right" : ""}`}>{value}</dd>
     </div>
   );
 }
@@ -39,7 +41,7 @@ export default async function LeadDetailPage({
 
   let lead;
   try {
-    lead = await new LeadGetUseCase().exec(uuid);
+    lead = await new LeadGetUseCase().exec(uuid, session.user);
   } catch {
     notFound();
   }
@@ -57,7 +59,18 @@ export default async function LeadDetailPage({
   ]);
 
   const fieldNameById = new Map((fieldRows ?? []).map((field) => [field.uuid, field.name]));
-  const metadataUuids = (metadataRows ?? []).map((row) => row.uuid);
+
+  // A lead with a customer row (convert sets customer.lead_id) is already
+  // converted: hide the Convert button and link to the customer instead.
+  // Best-effort read; a lookup failure keeps the button visible.
+  let convertedCustomerUuid: string | null = null;
+  try {
+    await CustomerModelFactory();
+    const converted = await CustomerModel.findOne({ where: { lead_id: uuid, deleted_at: null } });
+    convertedCustomerUuid = converted?.uuid ?? null;
+  } catch {
+    convertedCustomerUuid = null;
+  }  const metadataUuids = (metadataRows ?? []).map((row) => row.uuid);
   const activityUuids = (activityRows ?? []).map((row) => row.uuid);
   const fieldUuids = (metadataRows ?? [])
     .map((row) => row.lead_metadata_field_id)
@@ -90,7 +103,7 @@ export default async function LeadDetailPage({
             <Row label="Company" value={lead.company ?? "—"} />
             <Row label="Source" value={lead.source} />
             <Row label="Status" value={lead.status} />
-            <Row label="Value" value={typeof lead.value === "number" ? String(lead.value) : "—"} />
+            <Row label="Value" value={typeof lead.value === "number" ? formatMoney(lead.value) : "—"} numeric />
             <Row label="Assigned to" value={assigneeLabel} />
             <Row label="Notes" value={lead.notes ?? "—"} />
             <Row label="Created" value={lead.created_at} />
@@ -123,13 +136,28 @@ export default async function LeadDetailPage({
             >
               <DeleteLeadButton uuid={lead.uuid} label={lead.name} redirectTo={LEAD_LIST_PATH} />
             </AuthComponent>
-            <AuthComponent
-              user={session.user}
-              permissions={session.permissions}
-              allowedPermissions={["sales:customer:create:create"]}
-            >
-              <LeadConvertButton leadUuid={lead.uuid} label={lead.name} />
-            </AuthComponent>
+            {convertedCustomerUuid ? (
+              <AuthComponent
+                user={session.user}
+                permissions={session.permissions}
+                allowedPermissions={["sales:customer:view:detail"]}
+              >
+                <Link
+                  href={`/sales/views/customers/${convertedCustomerUuid}`}
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  View customer
+                </Link>
+              </AuthComponent>
+            ) : (
+              <AuthComponent
+                user={session.user}
+                permissions={session.permissions}
+                allowedPermissions={["sales:customer:create:create"]}
+              >
+                <LeadConvertButton leadUuid={lead.uuid} label={lead.name} />
+              </AuthComponent>
+            )}
           </div>
         </div>
 

@@ -45,6 +45,15 @@ export default async function DeliveryOrderDetailPage({
     notFound();
   }
 
+  const isDraft = order.status === "draft";
+  const salesOrderLabel = order.sales_order
+    ? `Order ${order.sales_order.id.slice(0, 8)} · ${order.sales_order.status}`
+    : order.sales_order_id;
+  const warehouseLabel = order.warehouse
+    ? `${order.warehouse.name} (${order.warehouse.code})`
+    : order.warehouse_id;
+  const items = order.items ?? [];
+
   const canShip = hasPermission(session.user, session.permissions, ["sales:delivery-order:view:ship"]);
 
   return (
@@ -69,13 +78,14 @@ export default async function DeliveryOrderDetailPage({
           <div className="rounded-[28px] border border-slate-200 bg-white/90 p-6 shadow-[0_30px_80px_rgba(15,23,42,0.12)] backdrop-blur-sm sm:p-8">
             <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Detail</p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-              Delivery {order.uuid.slice(0, 8)} · {order.status}
+              Delivery {order.doc_number ?? order.uuid.slice(0, 8)} · {order.status}
             </h1>
 
             <dl className="mt-6">
               <Row label="UUID" value={order.uuid} />
-              <Row label="Sales order" value={order.sales_order_id} />
-              <Row label="Warehouse" value={order.warehouse_id} />
+              <Row label="Doc number" value={order.doc_number ?? "—"} />
+              <Row label="Sales order" value={salesOrderLabel} />
+              <Row label="Warehouse" value={warehouseLabel} />
               <Row label="Status" value={order.status} />
               <Row label="Fulfillment" value={order.fulfillment ?? "—"} />
               <Row label="Stock deducted" value={order.stock_deducted ? "yes" : "no"} />
@@ -83,17 +93,33 @@ export default async function DeliveryOrderDetailPage({
               <Row label="Created" value={order.created_at} />
             </dl>
 
-            {order.items.length > 0 ? (
+            {items.length > 0 ? (
               <>
                 <p className="mt-6 text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Items</p>
-                <ul className="mt-2 space-y-2">
-                  {order.items.map((item: { uuid: string; product_id: string; qty: number }) => (
-                    <li key={item.uuid} className="rounded-xl border border-slate-200 p-3 text-sm">
-                      <span className="font-medium text-slate-900">{item.product_id.slice(0, 8)}</span>
-                      <span className="text-slate-500"> · qty {item.qty}</span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                        <th scope="col" className="px-3 py-2 font-medium">Product</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Variant</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((item) => (
+                        <tr key={item.uuid} className="border-b border-slate-100 last:border-0">
+                          <td className="px-3 py-2 font-medium text-slate-900">
+                            {item.product_sku ? `${item.product_sku} · ${item.product_name ?? ""}`.trim() : item.product_id}
+                          </td>
+                          <td className="px-3 py-2 text-slate-500">
+                            {item.variant_sku ? `${item.variant_sku} · ${item.variant_name ?? ""}`.trim() : (item.variant_id ?? "—")}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-900">{item.qty}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </>
             ) : null}
 
@@ -112,13 +138,29 @@ export default async function DeliveryOrderDetailPage({
                   stockDeducted={order.stock_deducted}
                 />
               ) : null}
-              <AuthComponent
-                user={session.user}
-                permissions={session.permissions}
-                allowedPermissions={["sales:delivery-order:view:delete"]}
-              >
-                <DeleteDeliveryOrderButton uuid={order.uuid} label={order.uuid.slice(0, 8)} redirectTo={DELIVERY_ORDER_LIST_PATH} />
-              </AuthComponent>
+              {isDraft || order.status === "packed" || order.status === "shipped" ? (
+                <AuthComponent
+                  user={session.user}
+                  permissions={session.permissions}
+                  allowedPermissions={["sales:delivery-order:view:update"]}
+                >
+                  <Link
+                    href={`/sales/views/delivery-orders/${order.uuid}/edit`}
+                    className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                  >
+                    Edit
+                  </Link>
+                </AuthComponent>
+              ) : null}
+              {isDraft ? (
+                <AuthComponent
+                  user={session.user}
+                  permissions={session.permissions}
+                  allowedPermissions={["sales:delivery-order:view:delete"]}
+                >
+                  <DeleteDeliveryOrderButton uuid={order.uuid} label={order.uuid.slice(0, 8)} redirectTo={DELIVERY_ORDER_LIST_PATH} />
+                </AuthComponent>
+              ) : null}
 
             </div>
           </div>

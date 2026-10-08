@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { SALES_ORDER_LIST_PATH } from "@/app/sales/views/sales-orders/paths";
 import type { SalesOrder } from "@/app/sales/models/SalesOrderModel";
+import { formatMoney } from "@/libraries/Currency";
 import type { PurchaseRequest } from "@/app/sales/models/PurchaseRequestModel";
 import type { Customer } from "@/app/sales/models/CustomerModel";
 import type { Product } from "@/app/product/models/ProductModel";
 import type { ProductVariant } from "@/app/product/models/ProductVariantModel";
 import type { Warehouse } from "@/app/warehouse/models/WarehouseModel";
 import { SelectField, TextAreaField, TextField } from "@/components/FormField";
-import { OrderItemsEditor, newOrderItemRow, orderLineTotal, type OrderItemRow } from "@/components/OrderItemsEditor";
+import { OrderItemsEditor, newOrderItemRow, orderLineTotal, type OrderItemRow } from "@/app/sales/components/orderItems/OrderItemsEditor";
 import type { SessionInfo } from "@/libraries/Auth";
 import { getEncrypted, postEncrypted, putEncrypted } from "@/libraries/EncryptedFetch";
 
@@ -45,6 +46,9 @@ export function SalesOrderForm({
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>([]);
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? "");
   const [purchaseRequestId, setPurchaseRequestId] = useState(initial?.purchase_request_id ?? "");
+  // Deep-linked PR (?purchase_request_id=) is fixed: the copy dropdown is
+  // replaced with a locked display and the link can't be changed.
+  const prLocked = mode === "create" && !!initial?.purchase_request_id;
   const [warehouseId, setWarehouseId] = useState(initial?.warehouse_id ?? "");
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [optionsError, setOptionsError] = useState("");
@@ -176,13 +180,16 @@ export function SalesOrderForm({
     try {
       const formData = new FormData(event.currentTarget);
       const payload: Record<string, unknown> = {
-        customer_id: customerId || undefined,
-        purchase_request_id: purchaseRequestId || null,
         warehouse_id: warehouseId || null,
         discount_pct: Number(String(formData.get("discount_pct") ?? "").trim() || 0),
         notes: String(formData.get("notes") ?? "").trim() || null,
         status: String(formData.get("status") ?? "draft"),
       };
+      // Customer and PR link are immutable after creation (update schema rejects them).
+      if (mode === "create") {
+        payload.customer_id = customerId || undefined;
+        payload.purchase_request_id = purchaseRequestId || null;
+      }
       if (Number.isNaN(payload.discount_pct)) {
         setError("Discount must be a number.");
         setIsPending(false);
@@ -220,7 +227,7 @@ export function SalesOrderForm({
         setError(envelope.message || `Failed to ${mode === "create" ? "create" : "update"} sales order.`);
         return;
       }
-      router.push(SALES_ORDER_LIST_PATH);
+      router.push(mode === "create" ? SALES_ORDER_LIST_PATH : `${SALES_ORDER_LIST_PATH}/${uuid}`);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -242,16 +249,28 @@ export function SalesOrderForm({
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
           {mode === "create" ? (
-            <SelectField
-              label="Copy deal prices from PR (optional)"
-              name="copy_pr"
-              value=""
-              onChange={(event) => void copyFromPr(event.target.value)}
-              disabled={optionsLoading}
-              options={purchaseRequests.map((option) => ({ value: option.uuid, label: `${option.uuid.slice(0, 8)} · ${option.status} · ${option.grand_total}` }))}
-              placeholder={optionsLoading ? "Loading purchase requests..." : "Select PR to copy..."}
-              hint="Fills customer, warehouse and item lines. The payload stays explicit."
-            />
+            prLocked ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Purchase request:{" "}
+                <span className="font-medium text-slate-900">
+                  {purchaseRequests.find((option) => option.uuid === initial?.purchase_request_id)
+                    ? `${purchaseRequests.find((option) => option.uuid === initial?.purchase_request_id)?.doc_number ?? initial?.purchase_request_id?.slice(0, 8)} · ${purchaseRequests.find((option) => option.uuid === initial?.purchase_request_id)?.status}`
+                    : (initial?.purchase_request_id ?? "—")}
+                </span>{" "}
+                (fixed from the purchase request page)
+              </div>
+            ) : (
+              <SelectField
+                label="Copy deal prices from PR (optional)"
+                name="copy_pr"
+                value=""
+                onChange={(event) => void copyFromPr(event.target.value)}
+                disabled={optionsLoading}
+                options={purchaseRequests.map((option) => ({ value: option.uuid, label: `${option.doc_number ?? option.uuid.slice(0, 8)} · ${option.status} · ${formatMoney(option.grand_total)}` }))}
+                placeholder={optionsLoading ? "Loading purchase requests..." : "Select PR to copy..."}
+                hint="Fills customer, warehouse and item lines. The payload stays explicit."
+              />
+            )
           ) : null}
 
           <div className="grid gap-5 sm:grid-cols-2">
@@ -305,7 +324,7 @@ export function SalesOrderForm({
             <>
               <OrderItemsEditor rows={rows} setRows={setRows} products={products} variants={variants} />
               <p className="text-sm text-slate-600" role="status">
-                Items subtotal preview: {previewTotal} (server snapshots on save)
+                Items subtotal preview: {formatMoney(previewTotal)} (server snapshots on save)
               </p>
             </>
           ) : (
@@ -313,7 +332,7 @@ export function SalesOrderForm({
           )}
 
           {purchaseRequestId ? (
-            <p className="text-xs text-slate-500">Linked purchase request: {purchaseRequestId.slice(0, 8)} (closed on save).</p>
+            <p className="text-xs text-slate-500">Linked purchase request: {purchaseRequests.find((option) => option.uuid === purchaseRequestId)?.doc_number ?? purchaseRequestId.slice(0, 8)} (closed on save).</p>
           ) : null}
 
           {optionsError ? (

@@ -1,12 +1,16 @@
 import { randomUUID } from "crypto";
 import Joi from "joi";
+import { Op } from "sequelize";
 import DeliveryOrderModelFactory, { DeliveryOrderModel, type CreateDeliveryOrderInput, type DeliveryOrder } from "@/app/sales/models/DeliveryOrderModel";
 import DeliveryOrderItemModelFactory, { DeliveryOrderItemModel } from "@/app/sales/models/DeliveryOrderItemModel";
 import SalesOrderModelFactory, { SalesOrderModel } from "@/app/sales/models/SalesOrderModel";
+import SalesOrderItemModelFactory, { SalesOrderItemModel } from "@/app/sales/models/SalesOrderItemModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
+import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
+import BadParameterException from "@/exceptions/BadParameterException";
 import ForbiddenException from "@/exceptions/ForbiddenException";
 import NotFoundException from "@/exceptions/NotFoundException";
 
@@ -68,6 +72,56 @@ export class DeliveryOrderCreateUseCase extends BaseUseCase<CreateDeliveryOrderI
       await assertOrderProduct(item.product_id, item.variant_id ?? null, organizationId);
     }
 
+    // A DO line cannot exceed its SO line's remaining qty (exact
+    // product+variant match, summed across duplicate payload rows).
+    // Remaining = ordered − already shipped (shipped/delivered, paper or
+    // system; draft/packed/cancelled consume nothing). 400, never capped.
+    await SalesOrderItemModelFactory();
+    const orderLines = await SalesOrderItemModel.findAll({
+      where: { sales_order_id: validated.sales_order_id, deleted_at: null },
+    });
+    const orderedByKey = new Map<string, number>();
+    for (const line of orderLines) {
+      const key = `${line.product_id}|${line.variant_id ?? ""}`;
+      orderedByKey.set(key, (orderedByKey.get(key) ?? 0) + line.qty);
+    }
+    await DeliveryOrderModelFactory();
+    const shippedHeaders = await DeliveryOrderModel.findAll({
+      where: {
+        sales_order_id: validated.sales_order_id,
+        status: { [Op.in]: ["shipped", "delivered"] },
+        deleted_at: null,
+      },
+      attributes: ["uuid"],
+    });
+    const shippedByKey = new Map<string, number>();
+    if (shippedHeaders.length > 0) {
+      await DeliveryOrderItemModelFactory();
+      const shippedItems = await DeliveryOrderItemModel.findAll({
+        where: {
+          delivery_order_id: { [Op.in]: shippedHeaders.map((header) => header.uuid) },
+          deleted_at: null,
+        },
+      });
+      for (const item of shippedItems) {
+        const key = `${item.product_id}|${item.variant_id ?? ""}`;
+        shippedByKey.set(key, (shippedByKey.get(key) ?? 0) + item.qty);
+      }
+    }
+    const requestedByKey = new Map<string, number>();
+    for (const item of validated.items ?? []) {
+      const key = `${item.product_id}|${item.variant_id ?? ""}`;
+      requestedByKey.set(key, (requestedByKey.get(key) ?? 0) + item.qty);
+    }
+    for (const [key, requested] of requestedByKey) {
+      const remaining = (orderedByKey.get(key) ?? 0) - (shippedByKey.get(key) ?? 0);
+      if (requested > remaining) {
+        throw new BadParameterException(
+          `Delivery qty ${requested} exceeds the remaining sales order qty ${remaining}.`,
+        );
+      }
+    }
+
     return { input: validated, actor: actor ?? null, organizationId };
   }
 
@@ -79,6 +133,7 @@ export class DeliveryOrderCreateUseCase extends BaseUseCase<CreateDeliveryOrderI
     const header = await DeliveryOrderModel.create({
       uuid: randomUUID(),
       organization_id: organizationId ?? null,
+      doc_number: await nextDocNumber("DO", organizationId),
       sales_order_id: input.sales_order_id,
       warehouse_id: input.warehouse_id,
       status: input.status ?? "draft",

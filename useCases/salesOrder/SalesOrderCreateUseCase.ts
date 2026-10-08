@@ -5,6 +5,7 @@ import SalesOrderItemModelFactory, { SalesOrderItemModel } from "@/app/sales/mod
 import PurchaseRequestModelFactory, { PurchaseRequestModel } from "@/app/sales/models/PurchaseRequestModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
+import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
@@ -86,6 +87,7 @@ export class SalesOrderCreateUseCase extends BaseUseCase<CreateSalesOrderInput, 
     const header = await SalesOrderModel.create({
       uuid: randomUUID(),
       organization_id: organizationId ?? null,
+      doc_number: await nextDocNumber("SO", organizationId),
       customer_id: input.customer_id,
       purchase_request_id: input.purchase_request_id ?? null,
       warehouse_id: input.warehouse_id ?? null,

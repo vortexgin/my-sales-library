@@ -44,6 +44,14 @@ export class LeadUpdateUseCase extends BaseUseCase<string, Lead, { uuid: string;
     if (!this.leadData) {
       throw new NotFoundException("Lead not found")
     }
+    // Same-org only (unlinked actors see unlinked rows); 404 to avoid
+    // leaking cross-org existence — mirrors LeadConvertUseCase.
+    const updateActorUuid = (actor as Record<string, unknown> | null)?.uuid;
+    const updateOrgId =
+      typeof updateActorUuid === "string" ? ((await UserModel.resolveOrganization(updateActorUuid))?.uuid ?? null) : null;
+    if ((this.leadData.organization_id ?? null) !== updateOrgId) {
+      throw new NotFoundException("Lead not found")
+    }
     this.beforeData = LeadModel.toApi(this.leadData?.toJSON());
 
     if (validatedInput.email) {

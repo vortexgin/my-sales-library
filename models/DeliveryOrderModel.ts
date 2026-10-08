@@ -16,14 +16,36 @@ export type DeliveryOrderItem = {
   product_id: string;
   variant_id: string | null;
   qty: number;
+  /** Relation labels resolved in the Get useCase (UUID fallback on pages). Null when not loaded. */
+  product_sku: string | null;
+  product_name: string | null;
+  variant_sku: string | null;
+  variant_name: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
 };
 
+export type DeliveryOrderSalesOrder = {
+  id: string;
+  status: string;
+};
+
+export type DeliveryOrderWarehouse = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type DeliveryOrderCustomer = {
+  id: string;
+  name: string;
+};
+
 export type DeliveryOrder = {
   uuid: string;
   organization_id: string | null;
+  doc_number: string | null;
   sales_order_id: string;
   warehouse_id: string;
   status: DeliveryOrderStatus;
@@ -34,6 +56,10 @@ export type DeliveryOrder = {
   updated_at: string;
   deleted_at: string | null;
   items?: DeliveryOrderItem[];
+  /** Relation labels come from eager-loaded associations, not stored snapshots. Null when absent. */
+  sales_order: DeliveryOrderSalesOrder | null;
+  warehouse: DeliveryOrderWarehouse | null;
+  customer: DeliveryOrderCustomer | null;
 };
 
 export type CreateDeliveryOrderInput = {
@@ -49,7 +75,7 @@ export type UpdateDeliveryOrderInput = {
   status?: DeliveryOrderStatus;
 };
 
-export type DeliveryOrderModelAttributes = Partial<Omit<DeliveryOrder, "created_at" | "updated_at" | "deleted_at" | "items">> & {
+export type DeliveryOrderModelAttributes = Partial<Omit<DeliveryOrder, "created_at" | "updated_at" | "deleted_at" | "items" | "sales_order" | "warehouse" | "customer">> & {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -60,6 +86,7 @@ export type DeliveryOrderModelCreationAttributes = Partial<DeliveryOrderModelAtt
 export class DeliveryOrderModel extends Model<DeliveryOrderModelAttributes, DeliveryOrderModelCreationAttributes> {
   declare uuid: string;
   declare organization_id: string | null;
+  declare doc_number: string | null;
   declare sales_order_id: string;
   declare warehouse_id: string;
   declare status: DeliveryOrderStatus;
@@ -71,15 +98,24 @@ export class DeliveryOrderModel extends Model<DeliveryOrderModelAttributes, Deli
   declare deleted_at: Date | null;
 
   static toApi(row: any): DeliveryOrder {
+    const salesOrder = row.sales_order ?? null;
+    const warehouse = row.warehouse ?? null;
+    const customer = row.customer ?? null;
     return {
       uuid: row.uuid,
       organization_id: row.organization_id ?? null,
+      doc_number: row.doc_number ?? null,
       sales_order_id: row.sales_order_id,
       warehouse_id: row.warehouse_id,
       status: row.status,
       fulfillment: row.fulfillment ?? null,
       stock_deducted: Boolean(row.stock_deducted),
       notes: row.notes ?? null,
+      sales_order: salesOrder ? { id: salesOrder.uuid ?? "", status: salesOrder.status ?? "" } : null,
+      warehouse: warehouse
+        ? { id: warehouse.uuid ?? "", code: warehouse.code ?? "", name: warehouse.name ?? "" }
+        : null,
+      customer: customer ? { id: customer.uuid ?? "", name: customer.name ?? "" } : null,
       created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
       updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
       deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
@@ -116,6 +152,11 @@ async function initDeliveryOrderModel(): Promise<typeof DeliveryOrderModel> {
         },
         organization_id: {
           type: DataTypes.UUID,
+          allowNull: true,
+          defaultValue: null,
+        },
+        doc_number: {
+          type: DataTypes.STRING(40),
           allowNull: true,
           defaultValue: null,
         },

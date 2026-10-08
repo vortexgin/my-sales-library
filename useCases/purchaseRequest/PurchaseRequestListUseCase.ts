@@ -1,12 +1,14 @@
 import Joi from "joi";
 import { Op } from "sequelize";
 import PurchaseRequestModelFactory, { type PurchaseRequest } from "@/app/sales/models/PurchaseRequestModel";
+import { customerNameById } from "@/app/sales/libraries/customerLabels";
 import { UserModel } from "@/app/base/models/UserModel";
 import { type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 
 export type ListPurchaseRequestsFilter = {
   customer_id?: string;
+  warehouse_id?: string;
   status?: string;
 };
 
@@ -20,6 +22,7 @@ export type ListPurchaseRequestsInput = {
 
 export type ListPurchaseRequestsQuery = {
   customer_id?: string;
+  warehouse_id?: string;
   status?: string;
   sortProperty: string;
   sortDirection: "ASC" | "DESC";
@@ -30,6 +33,7 @@ export type ListPurchaseRequestsQuery = {
 
 const SORTABLE_COLUMNS: Record<string, string> = {
   uuid: "uuid",
+  doc_number: "doc_number",
   status: "status",
   grand_total: "grand_total",
   created_at: "created_at",
@@ -39,6 +43,7 @@ const SORTABLE_COLUMNS: Record<string, string> = {
 const listPurchaseRequestsSchema = Joi.object({
   filter: Joi.object({
     customer_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
+    warehouse_id: Joi.string().uuid({ version: "uuidv4" }).optional(),
     status: Joi.string().trim().allow("").optional(),
   }).optional(),
   sortProperty: Joi.string()
@@ -63,6 +68,7 @@ export class PurchaseRequestListUseCase extends BaseUseCase<ListPurchaseRequests
 
     return {
       customer_id: filter.customer_id || undefined,
+      warehouse_id: filter.warehouse_id || undefined,
       status: filter.status?.trim() || undefined,
       sortProperty: SORTABLE_COLUMNS[validated.sortProperty.toLowerCase()] ?? "created_at",
       sortDirection: validated.sortDirection.toUpperCase() as "ASC" | "DESC",
@@ -78,15 +84,12 @@ export class PurchaseRequestListUseCase extends BaseUseCase<ListPurchaseRequests
   ): Promise<void> {
     const actorUuid = (actor as Record<string, unknown> | null)?.uuid;
     if (typeof actorUuid !== "string") {
+      conditions.push({ organization_id: null });
       return;
     }
 
     const organization = await UserModel.resolveOrganization(actorUuid);
-    if (!organization) {
-      return;
-    }
-
-    conditions.push({ organization_id: organization.uuid });
+    conditions.push({ organization_id: organization?.uuid ?? null });
   }
 
   protected async execute(context: ListPurchaseRequestsQuery): Promise<PurchaseRequest[]> {
@@ -95,6 +98,10 @@ export class PurchaseRequestListUseCase extends BaseUseCase<ListPurchaseRequests
 
     if (context.customer_id) {
       conditions.push({ customer_id: context.customer_id });
+    }
+
+    if (context.warehouse_id) {
+      conditions.push({ warehouse_id: context.warehouse_id });
     }
 
     if (context.status) {
@@ -110,6 +117,11 @@ export class PurchaseRequestListUseCase extends BaseUseCase<ListPurchaseRequests
       limit: context.limit,
     });
 
-    return rows.map((row) => PurchaseRequestModel.toApi(row.toJSON()));
+    const names = await customerNameById(rows.map((row) => row.customer_id));
+    return rows.map((row) => {
+      const json = row.toJSON() as Record<string, unknown>;
+      const name = names.get(row.customer_id);
+      return PurchaseRequestModel.toApi(name ? { ...json, customer: { uuid: row.customer_id, name } } : json);
+    });
   }
 }
