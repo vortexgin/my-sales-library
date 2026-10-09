@@ -1,6 +1,6 @@
 import { getSequelizeInstance } from "@/database/sequelize";
 
-export type SalesDocType = "PR" | "SO" | "DO";
+export type SalesDocType = "PR" | "SO" | "DO" | "POS";
 
 const ROMAN_MONTHS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
