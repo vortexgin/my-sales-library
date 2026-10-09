@@ -11,6 +11,7 @@ import { requireSession } from "@/libraries/Auth";
 import { PurchaseRequestGetUseCase } from "@/app/sales/useCases/purchaseRequest/PurchaseRequestGetUseCase";
 import SalesOrderModelFactory, { SalesOrderModel } from "@/app/sales/models/SalesOrderModel";
 import { formatMoney } from "@/libraries/Currency";
+import { PdfActions } from "@/components/PdfActions";
 
 export const metadata: Metadata = {
   title: "Purchase request detail | VortexGin",
@@ -152,6 +153,7 @@ export default async function PurchaseRequestDetailPage({
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
+              <PdfActions endpoint={`/sales/api/v1/purchase-requests/${request.uuid}/pdf`} />
               <Link
                 href={PURCHASE_REQUEST_LIST_PATH}
                 className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"

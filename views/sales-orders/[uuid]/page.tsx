@@ -10,6 +10,7 @@ import { SALES_ORDER_LIST_PATH } from "@/app/sales/views/sales-orders/paths";
 import { requireSession } from "@/libraries/Auth";
 import { SalesOrderGetUseCase } from "@/app/sales/useCases/salesOrder/SalesOrderGetUseCase";
 import { formatMoney } from "@/libraries/Currency";
+import { PdfActions } from "@/components/PdfActions";
 
 export const metadata: Metadata = {
   title: "Sales order detail | VortexGin",
@@ -142,6 +143,7 @@ export default async function SalesOrderDetailPage({
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
+              <PdfActions endpoint={`/sales/api/v1/sales-orders/${order.uuid}/pdf`} />
               <Link
                 href={SALES_ORDER_LIST_PATH}
                 className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"

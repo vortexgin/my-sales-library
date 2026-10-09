@@ -11,6 +11,7 @@ import { ShipDeliveryOrderButton } from "@/app/sales/components/deliveryOrder/Sh
 import { DELIVERY_ORDER_LIST_PATH } from "@/app/sales/views/delivery-orders/paths";
 import { requireSession } from "@/libraries/Auth";
 import { DeliveryOrderGetUseCase } from "@/app/sales/useCases/deliveryOrder/DeliveryOrderGetUseCase";
+import { PdfActions } from "@/components/PdfActions";
 
 export const metadata: Metadata = {
   title: "Delivery order detail | VortexGin",
@@ -140,6 +141,7 @@ export default async function DeliveryOrderDetailPage({
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
+              <PdfActions endpoint={`/sales/api/v1/delivery-orders/${order.uuid}/pdf`} />
               <Link
                 href={DELIVERY_ORDER_LIST_PATH}
                 className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
