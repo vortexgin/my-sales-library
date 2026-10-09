@@ -10,7 +10,6 @@ export type PosTransactionItemInput = {
   product_id: string;
   variant_id?: string | null;
   qty: number;
-  unit_price: number;
   discount_pct?: number;
 };
 
@@ -52,10 +51,13 @@ export type PosTransaction = {
   customer_id: string | null;
   warehouse_id: string;
   payment_method: PosPaymentMethod;
+  card_last_four: string | null;
   tendered: number | null;
   change: number | null;
   subtotal: number;
   discount_pct: number;
+  tax_pct: number;
+  tax_amount: number;
   grand_total: number;
   fulfillment: PosFulfillment;
   stock_deducted: boolean;
@@ -78,8 +80,10 @@ export type CreatePosTransactionInput = {
   customer_id?: string | null;
   warehouse_id: string;
   payment_method: PosPaymentMethod;
+  card_last_four?: string | null;
   tendered?: number | null;
   discount_pct?: number;
+  tax_pct?: number;
   fulfillment?: PosFulfillment;
   items: PosTransactionItemInput[];
 };
@@ -102,10 +106,13 @@ export class PosTransactionModel extends Model<PosTransactionModelAttributes, Po
   declare customer_id: string | null;
   declare warehouse_id: string;
   declare payment_method: PosPaymentMethod;
+  declare card_last_four: string | null;
   declare tendered: number | null;
   declare change: number | null;
   declare subtotal: number;
   declare discount_pct: number;
+  declare tax_pct: number;
+  declare tax_amount: number;
   declare grand_total: number;
   declare fulfillment: PosFulfillment;
   declare stock_deducted: boolean;
@@ -122,8 +129,10 @@ export class PosTransactionModel extends Model<PosTransactionModelAttributes, Po
     return Math.round(qty * unitPrice * (1 - discountPct / 100));
   }
 
-  static grandTotal(subtotal: number, discountPct: number): number {
-    return Math.round(subtotal * (1 - discountPct / 100));
+  static totals(subtotal: number, discountPct: number, taxPct: number): { taxAmount: number; grandTotal: number } {
+    const discountedTotal = Math.round(subtotal * (1 - discountPct / 100));
+    const taxAmount = Math.round(discountedTotal * (taxPct / 100));
+    return { taxAmount, grandTotal: discountedTotal + taxAmount };
   }
 
   static toApi(row: any): PosTransaction {
@@ -136,10 +145,13 @@ export class PosTransactionModel extends Model<PosTransactionModelAttributes, Po
       customer_id: row.customer_id ?? null,
       warehouse_id: row.warehouse_id,
       payment_method: row.payment_method,
+      card_last_four: row.card_last_four ?? null,
       tendered: typeof row.tendered === "number" ? row.tendered : null,
       change: typeof row.change === "number" ? row.change : null,
       subtotal: typeof row.subtotal === "number" ? row.subtotal : 0,
       discount_pct: typeof row.discount_pct === "number" ? row.discount_pct : 0,
+      tax_pct: typeof row.tax_pct === "number" ? row.tax_pct : 0,
+      tax_amount: typeof row.tax_amount === "number" ? row.tax_amount : 0,
       grand_total: typeof row.grand_total === "number" ? row.grand_total : 0,
       fulfillment: row.fulfillment ?? "system",
       stock_deducted: Boolean(row.stock_deducted),
@@ -208,6 +220,11 @@ async function initPosTransactionModel(): Promise<typeof PosTransactionModel> {
           type: DataTypes.ENUM("cash", "qris", "transfer", "debit_credit"),
           allowNull: false,
         },
+        card_last_four: {
+          type: DataTypes.STRING(4),
+          allowNull: true,
+          defaultValue: null,
+        },
         tendered: {
           type: DataTypes.INTEGER,
           allowNull: true,
@@ -225,6 +242,16 @@ async function initPosTransactionModel(): Promise<typeof PosTransactionModel> {
         },
         discount_pct: {
           type: DataTypes.FLOAT,
+          allowNull: false,
+          defaultValue: 0,
+        },
+        tax_pct: {
+          type: DataTypes.FLOAT,
+          allowNull: false,
+          defaultValue: 10,
+        },
+        tax_amount: {
+          type: DataTypes.INTEGER,
           allowNull: false,
           defaultValue: 0,
         },

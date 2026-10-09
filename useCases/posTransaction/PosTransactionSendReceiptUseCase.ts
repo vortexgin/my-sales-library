@@ -1,12 +1,12 @@
 import Joi from "joi";
 import PosTransactionModelFactory, { PosTransactionModel, type PosTransaction } from "@/app/sales/models/PosTransactionModel";
-import PosTransactionItemModelFactory, { PosTransactionItemModel } from "@/app/sales/models/PosTransactionItemModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
 import { UserModel } from "@/app/base/models/UserModel";
 import { recordActivityLog, type ActivityActor } from "@/app/base/models/ActivityLogModel";
 import { sendPosReceiptEmail } from "@/libraries/mail";
 import { BaseUseCase } from "@/useCases/BaseUseCase";
 import { buildReceipt } from "@/app/sales/useCases/posTransaction/PosTransactionCreateUseCase";
+import { PosTransactionGetUseCase } from "@/app/sales/useCases/posTransaction/PosTransactionGetUseCase";
 import BadParameterException from "@/exceptions/BadParameterException";
 import NotFoundException from "@/exceptions/NotFoundException";
 
@@ -56,13 +56,8 @@ export class PosTransactionSendReceiptUseCase extends BaseUseCase<string, PosTra
       throw new BadParameterException("The linked customer has no email address.");
     }
 
-    await PosTransactionItemModelFactory();
-    const items = await PosTransactionItemModel.findAll({
-      where: { transaction_id: context.uuid, deleted_at: null },
-      order: [["created_at", "ASC"]],
-    });
-
-    const receipt = buildReceipt(before, items.map((item) => PosTransactionItemModel.toApi(item.toJSON())), {
+    const detail = await new PosTransactionGetUseCase().exec(context.uuid, context.actor);
+    const receipt = buildReceipt(detail, detail.items, {
       actor: context.actor,
       organizationId: before.organization_id,
     });

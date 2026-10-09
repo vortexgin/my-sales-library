@@ -9,7 +9,6 @@ import PosTransactionModelFactory, {
 import PosTransactionItemModelFactory, { PosTransactionItemModel } from "@/app/sales/models/PosTransactionItemModel";
 import PosSessionModelFactory, { PosSessionModel } from "@/app/sales/models/PosSessionModel";
 import CustomerModelFactory, { CustomerModel } from "@/app/sales/models/CustomerModel";
-import { assertOrderProduct } from "@/app/sales/useCases/orderItemCheck";
 import { closeStaleSessions } from "@/app/sales/libraries/posSession";
 import { nextDocNumber } from "@/app/sales/libraries/docNumber";
 import { insertMovementRow } from "@/app/warehouse/libraries/insertMovementRow";
@@ -28,17 +27,25 @@ const posTransactionItemSchema = Joi.object({
   product_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   variant_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   qty: Joi.number().integer().min(1).required(),
-  unit_price: Joi.number().integer().min(0).required(),
   discount_pct: Joi.number().min(0).max(100).default(0),
-});
+}).unknown(false);
 
 const createPosTransactionSchema = Joi.object({
   session_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   customer_id: Joi.string().uuid({ version: "uuidv4" }).allow(null).optional(),
   warehouse_id: Joi.string().uuid({ version: "uuidv4" }).required(),
   payment_method: Joi.string().valid("cash", "qris", "transfer", "debit_credit").required(),
+  card_last_four: Joi.alternatives().conditional("payment_method", {
+    is: "debit_credit",
+    then: Joi.string().pattern(/^\d{4}$/).required().messages({
+      "string.pattern.base": "Card last four digits must contain exactly four numbers.",
+      "any.required": "Card last four digits are required for debit / credit payments.",
+    }),
+    otherwise: Joi.valid(null).optional(),
+  }),
   tendered: Joi.number().integer().min(0).allow(null).optional(),
   discount_pct: Joi.number().min(0).max(100).default(0),
+  tax_pct: Joi.number().min(0).max(100).default(10),
   fulfillment: Joi.string().valid("system", "paper").default("system"),
   items: Joi.array().items(posTransactionItemSchema).min(1).max(200).required(),
 }).unknown(false);
@@ -74,9 +81,14 @@ async function warehouseModulePresent(): Promise<boolean> {
   }
 }
 
-function snapshotTotals(items: Array<{ qty: number; unit_price: number; discount_pct?: number }>, headerPct: number): {
+function snapshotTotals(
+  items: Array<{ qty: number; unit_price: number; discount_pct?: number }>,
+  headerPct: number,
+  taxPct: number,
+): {
   priced: Array<{ qty: number; unit_price: number; discount_pct: number; line_total: number }>;
   subtotal: number;
+  tax_amount: number;
   grand_total: number;
 } {
   const priced = items.map((item) => {
@@ -89,11 +101,68 @@ function snapshotTotals(items: Array<{ qty: number; unit_price: number; discount
     };
   });
   const subtotal = priced.reduce((sum, item) => sum + item.line_total, 0);
-  return { priced, subtotal, grand_total: PosTransactionModel.grandTotal(subtotal, headerPct) };
+  const { taxAmount, grandTotal } = PosTransactionModel.totals(subtotal, headerPct, taxPct);
+  return { priced, subtotal, tax_amount: taxAmount, grand_total: grandTotal };
+}
+
+type AuthoritativeItem = CreatePosTransactionInput["items"][number] & {
+  unit_price: number;
+  product_name: string;
+  product_sku: string;
+  variant_name: string | null;
+  variant_sku: string | null;
+};
+type AuthoritativeInput = Omit<CreatePosTransactionInput, "items"> & { items: AuthoritativeItem[] };
+
+async function resolveAuthoritativeItems(
+  items: CreatePosTransactionInput["items"],
+  organizationId: string | null,
+): Promise<AuthoritativeItem[]> {
+  const [productModule, variantModule] = await Promise.all([
+    import("@/app/product/models/ProductModel"),
+    import("@/app/product/models/ProductVariantModel"),
+  ]);
+  const [ProductModel, ProductVariantModel] = await Promise.all([
+    productModule.getProductModel(),
+    variantModule.getProductVariantModel(),
+  ]);
+  const productIds = [...new Set(items.map((item) => item.product_id))];
+  const variantIds = [...new Set(items.map((item) => item.variant_id).filter((id): id is string => Boolean(id)))];
+  const [products, variants] = await Promise.all([
+    ProductModel.findAll({ where: { uuid: productIds, organization_id: organizationId, status: "active", deleted_at: null } }),
+    variantIds.length > 0
+      ? ProductVariantModel.findAll({ where: { uuid: variantIds, organization_id: organizationId, status: "active", deleted_at: null } })
+      : [],
+  ]);
+  const productById = new Map(products.map((product) => [product.uuid, product]));
+  const variantById = new Map(variants.map((variant) => [variant.uuid, variant]));
+
+  return items.map((item) => {
+    const product = productById.get(item.product_id);
+    if (!product) {
+      throw new NotFoundException("Active product not found.");
+    }
+    const variant = item.variant_id ? variantById.get(item.variant_id) : null;
+    if (item.variant_id && (!variant || variant.product_id !== product.uuid)) {
+      throw new NotFoundException("Active product variant not found for this product.");
+    }
+    const unitPrice = variant && typeof variant.price_override === "number"
+      ? variant.price_override
+      : product.base_price;
+    return {
+      ...item,
+      variant_id: item.variant_id ?? null,
+      unit_price: unitPrice,
+      product_name: product.name,
+      product_sku: product.sku,
+      variant_name: variant?.name ?? null,
+      variant_sku: variant?.sku ?? null,
+    };
+  });
 }
 
 export type PosTransactionCreateContext = {
-  input: CreatePosTransactionInput;
+  input: AuthoritativeInput;
   actor: ActivityActor;
   organizationId: string | null;
   sessionUuid: string;
@@ -145,12 +214,11 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
 
     await assertWarehouseInScope(validated.warehouse_id, organizationId);
 
-    for (const item of validated.items ?? []) {
-      await assertOrderProduct(item.product_id, item.variant_id ?? null, organizationId);
-    }
+    const authoritativeItems = await resolveAuthoritativeItems(validated.items ?? [], organizationId);
+    const authoritativeInput: AuthoritativeInput = { ...validated, items: authoritativeItems };
 
     const headerDiscount = validated.discount_pct ?? 0;
-    const { grand_total } = snapshotTotals(validated.items ?? [], headerDiscount);
+    const { grand_total } = snapshotTotals(authoritativeItems, headerDiscount, validated.tax_pct ?? 10);
 
     // Cash must cover the total; other methods ignore tendered entirely.
     let tendered: number | null = null;
@@ -169,7 +237,7 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
     const fulfillment = validated.fulfillment === "paper" || !(await warehouseModulePresent()) ? "paper" : "system";
 
     return {
-      input: validated,
+      input: authoritativeInput,
       actor: actor ?? null,
       organizationId,
       sessionUuid: session.uuid,
@@ -186,7 +254,8 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
     await PosTransactionItemModelFactory();
 
     const headerDiscount = input.discount_pct ?? 0;
-    const { priced, subtotal, grand_total } = snapshotTotals(input.items ?? [], headerDiscount);
+    const taxPct = input.tax_pct ?? 10;
+    const { priced, subtotal, tax_amount, grand_total } = snapshotTotals(input.items, headerDiscount, taxPct);
     const receiptNo = await nextDocNumber("POS", organizationId);
 
     const sequelize = await getSequelizeInstance();
@@ -199,10 +268,13 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
           customer_id: input.customer_id ?? null,
           warehouse_id: input.warehouse_id,
           payment_method: input.payment_method,
+          card_last_four: input.payment_method === "debit_credit" ? input.card_last_four : null,
           tendered,
           change,
           subtotal,
           discount_pct: headerDiscount,
+          tax_pct: taxPct,
+          tax_amount,
           grand_total,
           fulfillment,
           stock_deducted: fulfillment === "system",
@@ -216,7 +288,7 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
 
       const items = [];
       for (const [index, item] of priced.entries()) {
-        const source = (input.items ?? [])[index];
+        const source = input.items[index];
         const row = await PosTransactionItemModel.create(
           {
             uuid: randomUUID(),
@@ -231,7 +303,13 @@ export class PosTransactionCreateUseCase extends BaseUseCase<CreatePosTransactio
           },
           { transaction },
         );
-        items.push(PosTransactionItemModel.toApi(row.toJSON()));
+        items.push(PosTransactionItemModel.toApi({
+          ...row.toJSON(),
+          product_name: source.product_name,
+          product_sku: source.product_sku,
+          variant_name: source.variant_name,
+          variant_sku: source.variant_sku,
+        }));
       }
 
       if (fulfillment === "system") {
@@ -319,14 +397,20 @@ export function buildReceipt(
     warehouse_id: txn.warehouse_id,
     customer_id: txn.customer_id,
     payment_method: txn.payment_method,
+    card_last_four: txn.card_last_four,
     tendered: txn.tendered,
     change: txn.change,
     subtotal: txn.subtotal,
     discount_pct: txn.discount_pct,
+    tax_pct: txn.tax_pct,
+    tax_amount: txn.tax_amount,
     grand_total: txn.grand_total,
     lines: items.map((item) => ({
       product_id: item.product_id,
+      product_name: item.product_name ?? item.product_id,
+      product_sku: item.product_sku,
       variant_id: item.variant_id,
+      variant_name: item.variant_name,
       qty: item.qty,
       unit_price: item.unit_price,
       discount_pct: item.discount_pct,

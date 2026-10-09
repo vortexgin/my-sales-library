@@ -71,6 +71,12 @@ export function ReceiptView({
             <dt className="text-slate-500">Payment</dt>
             <dd className="font-medium">{receipt.payment_method}</dd>
           </div>
+          {receipt.card_last_four ? (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Card ending</dt>
+              <dd className="font-medium tabular-nums">•••• {receipt.card_last_four}</dd>
+            </div>
+          ) : null}
           {typeof receipt.tendered === "number" ? (
             <>
               <div className="flex justify-between gap-4">
@@ -88,7 +94,10 @@ export function ReceiptView({
           {receipt.lines.map((line) => (
             <li key={`${line.product_id}-${line.variant_id ?? ""}`} className="flex items-baseline justify-between gap-3">
               <span className="min-w-0">
-                <span className="block truncate font-medium">{line.product_id.slice(0, 8)}</span>
+                <span className="block truncate font-medium">{line.product_name}</span>
+                {line.variant_name ? (
+                  <span className="block truncate text-xs text-slate-500">{line.variant_name}</span>
+                ) : null}
                 <span className="block text-xs text-slate-500">
                   {line.qty} × {formatMoney(line.unit_price)}
                   {line.discount_pct > 0 ? ` (−${line.discount_pct}%)` : ""}
@@ -106,6 +115,10 @@ export function ReceiptView({
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Discount</dt>
             <dd className="tabular-nums">{receipt.discount_pct}%</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Tax ({receipt.tax_pct}%)</dt>
+            <dd className="tabular-nums">{formatMoney(receipt.tax_amount)}</dd>
           </div>
           <div className="flex justify-between gap-4 text-base">
             <dt className="font-semibold">Total</dt>

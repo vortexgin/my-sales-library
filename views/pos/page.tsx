@@ -44,11 +44,6 @@ export default async function PosPage() {
       <main className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
         <div className="w-full">
           <div className="rounded-[28px] border border-slate-200 bg-white/90 p-6 shadow-[0_30px_80px_rgba(15,23,42,0.12)] backdrop-blur-sm sm:p-8">
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-600">Sales</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">Point of sale.</h1>
-            <p className="mt-2 text-sm text-slate-500">
-              Ring up walk-in and customer sales in your shift session.
-            </p>
             <PosClient session={session} initialSession={initialSession} />
           </div>
         </div>
